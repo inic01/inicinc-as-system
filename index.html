@@ -2119,6 +2119,7 @@
   .card-status-label.status-해피콜완료      { background: #e0e7ff; color: #3730a3; }
   .card-status-label.status-답변완료        { background: #dcfce7; color: #14532d; }
   .card-status-label.status-확인요청답변완료 { background: #f3e8ff; color: #6b21a8; }
+  .card-status-label.status-해피콜재요청 { background: #dbeafe; color: #1e40af; }
   .card-status-label.status-추가입금        { background: #fee2e2; color: #991b1b; }
 
   /* status 라벨 안의 X 버튼 (단순 표시 status만 삭제 가능) */
@@ -18961,6 +18962,16 @@
           }
         }
       }
+      // (v25) 수리대기 → 해피콜 재요청: 수리 중 고객 재안내/확인이 필요할 때
+      //       해피콜대기로 보내고, 이후엔 기존 버튼으로 처리됨
+      //       (해피콜완료 → 완료 / 재검수요청 → 수리대기 복귀)
+      buttons.push({
+        id: 'actRecallHappycall',
+        label: '📞 해피콜 재요청 → 해피콜대기 (내용 필수)',
+        bg: '#2A6FBA',
+        needsNote: true,
+        action: () => dashActionRecallHappycall(c)
+      });
     } else if (stage === '입금대기') {
       // 보상판매 케이스는 입금완료 시 처리대기로, 일반 유상은 수리대기로
       if (c.bosangSale) {
@@ -23374,7 +23385,7 @@
     //
     // 통합 대상: 재검수요청 / 답변완료 / 확인요청 답변완료 / 협의필요 / 협의필요 답변완료
     // 통합 안 함: 수리완료, 입금완료, 해피콜완료, 검수완료 등 (1회만 일어나는 단계 종료성 라벨)
-    const MERGE_TARGETS = ['재검수요청', '재검수답변완료', '재검수 답변완료', '답변완료', '확인요청 답변완료', '협의필요', '협의답변완료', '협의필요 답변완료'];
+    const MERGE_TARGETS = ['재검수요청', '재검수답변완료', '재검수 답변완료', '답변완료', '확인요청 답변완료', '협의필요', '협의답변완료', '협의필요 답변완료', '해피콜재요청'];
     if (MERGE_TARGETS.includes(actionStatusValue) &&
         (actionStatusOp === 'append' || actionStatusOp === 'replace-on-reinspect')) {
       // 같은 라벨(또는 "N회 [라벨]") 합산
@@ -23624,6 +23635,27 @@
         confirmAnswers: [...prevAnswers, newAnswer],
         happycallStaff: NAS_USER || c.happycallStaff || '',
       }
+    });
+  }
+
+  // (v25) 액션: 수리대기 → 해피콜 재요청
+  // 엔지니어가 수리 중 고객 재안내/확인이 필요할 때 해피콜대기로 되돌림
+  // 이후: 해피콜완료(→완료) 또는 재검수요청(→수리대기) — 기존 해피콜대기 버튼으로 처리
+  async function dashActionRecallHappycall(c) {
+    const note = dashGetActionNote();
+    if (!note) {
+      showToast('해피콜팀에 전달할 내용을 입력하세요 (고객에게 안내/확인할 내용)', 'error');
+      const el = document.getElementById('dashActionNote');
+      if (el) el.focus();
+      return;
+    }
+    await dashApplyStageChange(c, '해피콜대기', {
+      note,
+      newStatus: '',
+      role: 'engineer',
+      actionLabel: '해피콜재요청',
+      actionStatusOp: 'append',
+      actionStatusValue: '해피콜재요청',
     });
   }
 
@@ -27365,8 +27397,13 @@
       const hasDefect  = allAtts.some(a => a.source && a.source.startsWith('defect'));
       const hasNormal  = allAtts.some(a => a.source === 'normal');
       const hasRecovery = allAtts.some(a => a.source === 'recovery');
+      // (v25) 로봇·계절가전 제품군은 정상작동 영상/사진 필수 해제 (로봇·계절가전팀 요청)
+      //       가운뎃점 표기 변형(·/・/,/-) 대응을 위해 특수문자 제거 후 비교
+      const _rawCat = document.getElementById('productCategory')?.value || '';
+      const _catNorm = String(_rawCat).replace(/[^가-힣a-zA-Z0-9]/g, '');
+      const isRobotSeasonal = _catNorm.includes('로봇') || _catNorm.includes('계절가전');
       if (!hasDefect)   return showToast('불량사진/영상을 첨부하세요 (필수)', 'error');
-      if (!hasNormal)   return showToast('정상작동영상을 첨부하세요 (필수)', 'error');
+      if (!hasNormal && !isRobotSeasonal) return showToast('정상작동영상을 첨부하세요 (필수)', 'error');
       if (!hasRecovery) return showToast('회수품목 사진을 첨부하세요 (필수)', 'error');
     }
 
