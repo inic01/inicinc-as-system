@@ -2932,6 +2932,22 @@
     outline: none;
     font-family: inherit;
   }
+  /* (v25) 렉 모달 부품 목록 — 전역 input/label 스타일 무력화 */
+  #adminFormRackPartList label {
+    margin-bottom: 0;
+    font-weight: 500;
+    color: #111827;
+  }
+  #adminFormRackPartList label:hover { background: #f8fafc; }
+  #adminFormRackPartList input[type="checkbox"] {
+    width: 16px;
+    height: 16px;
+    flex: 0 0 auto;
+    padding: 0;
+    margin: 0;
+    accent-color: #2563eb;
+    cursor: pointer;
+  }
   .admin-form-field input:focus,
   .admin-form-field select:focus,
   .admin-form-field textarea:focus {
@@ -16756,7 +16772,7 @@
       <!-- (v25) 이 렉에 보관할 부품 선택 -->
       <div class="admin-form-field">
         <label>📦 이 렉에 보관할 부품 <span style="font-weight:600;color:#2563eb;"><span id="adminFormRackPartCount">0</span>개 선택</span></label>
-        <input type="text" id="adminFormRackPartSearch" placeholder="부품명/코드 검색 후 체크하세요" autocomplete="off" oninput="adminRackPartListRender()">
+        <input type="text" id="adminFormRackPartSearch" placeholder="부품명/그룹/카테고리/코드 검색 후 체크하세요" autocomplete="off" oninput="adminRackPartListRender()" onkeyup="adminRackPartListRender()" onchange="adminRackPartListRender()">
         <div id="adminFormRackPartList" style="max-height:220px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:8px;margin-top:6px;"></div>
         <div class="field-hint">체크한 부품의 <b>렉 위치</b>가 이 렉으로 저장되어 부품 메뉴에 바로 반영됩니다. 체크를 해제하면 배정이 풀립니다.</div>
       </div>
@@ -16807,29 +16823,47 @@
     const q = (document.getElementById('adminFormRackPartSearch')?.value || '').trim().toLowerCase();
     const parts = window._adminParts || [];
     let shown;
+    let matchTotal = 0;
     if (q) {
-      shown = parts.filter(p =>
-        (p.name || '').toLowerCase().includes(q) ||
-        (p.code || '').toLowerCase().includes(q)
-      ).slice(0, 30);
+      // (v25) 부품 관리 메뉴와 동일하게 부품명/그룹/카테고리/코드 4개 필드 검색
+      //       + 공백 무시 매칭 ("iA 22" ↔ "iA22" 표기 차이 대응)
+      const qNoSpace = q.replace(/\s+/g, '');
+      const hit = (v) => {
+        const s = String(v || '').toLowerCase();
+        return s.includes(q) || s.replace(/\s+/g, '').includes(qNoSpace);
+      };
+      const matched = parts.filter(p =>
+        hit(p.name) || hit(p.code) || hit(p.group) || hit(p.category)
+      );
+      matchTotal = matched.length;
+      shown = matched.slice(0, 30);
     } else {
       shown = parts.filter(p => st.selected.has(p.id));
     }
 
     if (shown.length === 0) {
-      listEl.innerHTML = `<div style="padding:12px;font-size:12px;color:#9ca3af;">${q ? '검색 결과가 없습니다' : '배정된 부품이 없습니다. 위 검색창에서 부품을 찾아 체크하세요.'}</div>`;
+      listEl.innerHTML = `<div style="padding:12px;font-size:12px;color:#9ca3af;">${q ? `"${escapeHtml(q)}" 검색 결과가 없습니다 (부품명/그룹/카테고리/코드로 검색됩니다)` : '배정된 부품이 없습니다. 위 검색창에서 부품을 찾아 체크하세요.'}</div>`;
     } else {
-      listEl.innerHTML = shown.map(p => {
+      // (v25) 검색이 실제 동작 중인지 보이도록 검색어와 건수 표시
+      const headerHtml = q
+        ? `<div style="padding:6px 10px;font-size:11px;color:#2563eb;background:#eff6ff;border-bottom:1px solid #dbeafe;font-weight:600;">"${escapeHtml(q)}" 검색 결과 ${matchTotal}건</div>`
+        : '';
+      listEl.innerHTML = headerHtml + shown.map(p => {
         const checked = st.selected.has(p.id);
         const cur = p.rack || '';
         const curInfo = cur && cur !== st.label
           ? `<span style="color:#d97706;font-size:11px;margin-left:6px;">현재: ${escapeHtml(cur)}</span>` : '';
+        // (v25) 그룹/카테고리도 표시 — 그룹으로 검색됐을 때 어떤 부품인지 알 수 있게
+        const groupInfo = (p.group || p.category)
+          ? `<span style="color:#2563eb;font-size:11px;margin-left:6px;">[${escapeHtml(p.group || p.category)}]</span>` : '';
         return `<label style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-bottom:1px solid #f3f4f6;cursor:pointer;font-size:13px;">
           <input type="checkbox" ${checked ? 'checked' : ''} onchange="adminRackPartToggle('${p.id}')">
-          <span style="flex:1;">${escapeHtml(p.name || '')} ${p.code ? `<span style="color:#9ca3af;font-size:11px;">(${escapeHtml(p.code)})</span>` : ''}${curInfo}</span>
+          <span style="flex:1;">${escapeHtml(p.name || '')} ${p.code ? `<span style="color:#9ca3af;font-size:11px;">(${escapeHtml(p.code)})</span>` : ''}${groupInfo}${curInfo}</span>
           ${Number(p.price) > 0 ? `<span style="color:#6b7280;font-size:11px;">${Number(p.price).toLocaleString()}원</span>` : ''}
         </label>`;
-      }).join('');
+      }).join('')
+      // (v25) 30개 초과 시 잘렸음을 안내
+      + (matchTotal > 30 ? `<div style="padding:8px 10px;font-size:11px;color:#9ca3af;background:#f8fafc;">외 ${matchTotal - 30}개 더 있음 — 검색어를 더 구체적으로 입력하세요</div>` : '');
     }
     const cntEl = document.getElementById('adminFormRackPartCount');
     if (cntEl) cntEl.textContent = st.selected.size;
