@@ -17832,14 +17832,30 @@
         listEl.innerHTML = '<div style="color:#9ca3af;font-size:13px;padding:8px 0;">해피콜 메모가 없습니다.</div>';
         return;
       }
+      // (v25) 수정/삭제용 캐시 — onclick으로 텍스트 직접 전달 시 깨짐 방지
+      if (!window._hcMemoCache) window._hcMemoCache = {};
+      window._hcMemoCache[caseId] = memos;
+
+      const _me = String(NAS_USER || '').toLowerCase();
+      const _isMaster = (window.isMasterBypassSession && window.isMasterBypassSession()) || window._currentUserRole === 'master';
+
       listEl.innerHTML = memos.map(m => {
         const dt = m.createdAt && m.createdAt.toDate ? m.createdAt.toDate() : new Date(m.createdAt || Date.now());
         const timeStr = `${String(dt.getMonth()+1).padStart(2,'0')}/${String(dt.getDate()).padStart(2,'0')} ${String(dt.getHours()).padStart(2,'0')}:${String(dt.getMinutes()).padStart(2,'0')}`;
         const name = window.getDisplayName ? window.getDisplayName(m.createdBy) : (m.createdBy || '');
-        return `<div style="background:#f0fdf4;border-left:3px solid #0f766e;padding:10px 12px;border-radius:6px;">
-          <div style="font-size:11px;color:#085041;font-weight:700;margin-bottom:4px;display:flex;justify-content:space-between;">
-            <span>${escapeHtml(name)}</span>
-            <span style="color:#9ca3af;font-weight:500;">${timeStr}</span>
+        // (v25) 본인 메모 = 수정+삭제 / 마스터 = 삭제만 (남의 글 내용 수정은 불가)
+        const isMine = String(m.createdBy || '').toLowerCase() === _me;
+        const canEdit = isMine;
+        const canDelete = isMine || _isMaster;
+        const editedMark = m.updatedAt ? ' <span style="color:#9ca3af;font-weight:400;font-size:10px;">(수정됨)</span>' : '';
+        const btns = (canEdit || canDelete) ? `<span style="display:inline-flex;gap:6px;margin-left:8px;">
+            ${canEdit ? `<button type="button" onclick="dashEditHcMemo('${escapeHtml(caseId)}','${m.id}')" title="수정" style="border:none;background:transparent;cursor:pointer;font-size:12px;padding:0;color:#0f766e;">✏️</button>` : ''}
+            ${canDelete ? `<button type="button" onclick="dashDeleteHcMemo('${escapeHtml(caseId)}','${m.id}')" title="삭제" style="border:none;background:transparent;cursor:pointer;font-size:12px;padding:0;color:#dc2626;">🗑️</button>` : ''}
+          </span>` : '';
+        return `<div id="hcMemoItem_${m.id}" style="background:#f0fdf4;border-left:3px solid #0f766e;padding:10px 12px;border-radius:6px;">
+          <div style="font-size:11px;color:#085041;font-weight:700;margin-bottom:4px;display:flex;justify-content:space-between;align-items:center;">
+            <span>${escapeHtml(name)}${editedMark}</span>
+            <span style="color:#9ca3af;font-weight:500;display:inline-flex;align-items:center;">${timeStr}${btns}</span>
           </div>
           <div style="font-size:13px;color:#111827;white-space:pre-line;line-height:1.5;">${escapeHtml(m.text)}</div>
         </div>`;
@@ -17867,6 +17883,67 @@
       window.dashLoadHcMemos(caseId);
     } catch(e) {
       showToast('저장 실패: ' + e.message, 'error');
+    }
+  };
+
+  // (v25) 해피콜 메모 수정 — 본인 메모만, 해당 칸이 입력창으로 전환됨
+  window.dashEditHcMemo = function(caseId, memoId) {
+    const m = ((window._hcMemoCache || {})[caseId] || []).find(x => x.id === memoId);
+    const box = document.getElementById('hcMemoItem_' + memoId);
+    if (!m || !box) return;
+    // 본인 확인 (화면 위변조 대비 한 번 더)
+    if (String(m.createdBy || '').toLowerCase() !== String(NAS_USER || '').toLowerCase()) {
+      showToast('본인이 작성한 메모만 수정할 수 있습니다', 'error');
+      return;
+    }
+    box.innerHTML = `
+      <div style="font-size:11px;color:#085041;font-weight:700;margin-bottom:6px;">메모 수정 중...</div>
+      <textarea id="hcMemoEdit_${memoId}" rows="3" style="width:100%;box-sizing:border-box;padding:8px 10px;font-size:13px;border:1px solid #0f766e;border-radius:6px;resize:vertical;font-family:inherit;">${escapeHtml(m.text || '')}</textarea>
+      <div style="display:flex;gap:6px;justify-content:flex-end;margin-top:6px;">
+        <button type="button" onclick="dashLoadHcMemos('${escapeHtml(caseId)}')" style="padding:6px 12px;border:1px solid #d1d5db;border-radius:6px;background:#fff;cursor:pointer;font-size:12px;color:#374151;">취소</button>
+        <button type="button" onclick="dashSaveHcMemoEdit('${escapeHtml(caseId)}','${memoId}')" style="padding:6px 12px;border:none;border-radius:6px;background:#0f766e;cursor:pointer;font-size:12px;color:#fff;font-weight:700;">저장</button>
+      </div>`;
+    const ta = document.getElementById('hcMemoEdit_' + memoId);
+    if (ta) { ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); }
+  };
+
+  // (v25) 해피콜 메모 수정 저장
+  window.dashSaveHcMemoEdit = async function(caseId, memoId) {
+    const ta = document.getElementById('hcMemoEdit_' + memoId);
+    if (!ta) return;
+    const text = ta.value.trim();
+    if (!text) { showToast('메모 내용을 입력하세요', 'error'); return; }
+    try {
+      await updateDoc(doc(db, 'hcMemos', memoId), {
+        text,
+        updatedAt: serverTimestamp(),
+        updatedBy: NAS_USER || '관리자'
+      });
+      showToast('메모 수정됨', 'success');
+      window.dashLoadHcMemos(caseId);
+    } catch(e) {
+      showToast('수정 실패: ' + e.message, 'error');
+    }
+  };
+
+  // (v25) 해피콜 메모 삭제 — 본인 또는 마스터
+  window.dashDeleteHcMemo = async function(caseId, memoId) {
+    const m = ((window._hcMemoCache || {})[caseId] || []).find(x => x.id === memoId);
+    if (!m) return;
+    const isMine = String(m.createdBy || '').toLowerCase() === String(NAS_USER || '').toLowerCase();
+    const isMaster = (window.isMasterBypassSession && window.isMasterBypassSession()) || window._currentUserRole === 'master';
+    if (!isMine && !isMaster) {
+      showToast('본인이 작성한 메모만 삭제할 수 있습니다', 'error');
+      return;
+    }
+    const preview = String(m.text || '').slice(0, 30);
+    if (!confirm(`이 메모를 삭제하시겠습니까?\n\n"${preview}${(m.text || '').length > 30 ? '...' : ''}"\n\n삭제 후 복구할 수 없습니다.`)) return;
+    try {
+      await deleteDoc(doc(db, 'hcMemos', memoId));
+      showToast('메모 삭제됨', 'success');
+      window.dashLoadHcMemos(caseId);
+    } catch(e) {
+      showToast('삭제 실패: ' + e.message, 'error');
     }
   };
 
