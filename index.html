@@ -16602,13 +16602,14 @@
               <th style="width: 80px;">순서</th>
               <th style="width: 180px;">소속팀</th>
               <th>렉 이름</th>
+              <th style="width: 90px;">보관 부품</th>
               <th style="width: 80px;">상태</th>
               <th style="width: 140px;">최근 수정</th>
               <th style="width: 100px; text-align: right;">작업</th>
             </tr>
           </thead>
           <tbody id="adminRacksTbody">
-            <tr><td colspan="6" class="admin-loading">데이터 불러오는 중...</td></tr>
+            <tr><td colspan="7" class="admin-loading">데이터 불러오는 중...</td></tr>
           </tbody>
         </table>
       </div>
@@ -16616,6 +16617,18 @@
 
     adminStartTeamsSync();
     adminStartRacksSync();
+
+    // (v25) 보관 부품 수 표시용 — 부품 동기화 시작, 데이터 도착하면 테이블 갱신
+    if (!window._adminPartsLoadedOnce && typeof adminStartPartsSync === 'function') {
+      try { adminStartPartsSync(); } catch(e) {}
+      const _rackPartsWait = setInterval(() => {
+        if (window._adminPartsLoadedOnce) {
+          clearInterval(_rackPartsWait);
+          try { adminRenderRacksTable(); } catch(e) {}
+        }
+      }, 700);
+      setTimeout(() => clearInterval(_rackPartsWait), 15000);
+    }
 
     if (window._adminRacks.length > 0 || window._adminTeams.length > 0) {
       adminUpdateRackTeamFilter();
@@ -16672,17 +16685,23 @@
     }
 
     if (rows.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="6" class="admin-table-empty">표시할 렉이 없습니다. [+ 신규 등록]으로 추가하세요.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="7" class="admin-table-empty">표시할 렉이 없습니다. [+ 신규 등록]으로 추가하세요.</td></tr>`;
       return;
     }
 
     tbody.innerHTML = rows.map(r => {
       const updatedAt = r.updatedAt ? new Date(r.updatedAt.seconds * 1000).toLocaleDateString('ko-KR') : '-';
+      // (v25) 이 렉에 배정된 부품 수 — 부품 데이터 로드 전이면 '-' 표시
+      const rackLabel = `${r.team} - ${r.name}`;
+      const partCount = window._adminPartsLoadedOnce
+        ? (window._adminParts || []).filter(p => (p.rack || '') === rackLabel).length
+        : null;
       return `
         <tr class="${r.active === false ? 'inactive' : ''}">
           <td>${r.order ?? '-'}</td>
           <td>${escapeHtml(r.team || '-')}</td>
           <td><b>${escapeHtml(r.name || '')}</b></td>
+          <td>${partCount === null ? '<span style="color:#9ca3af;">-</span>' : (partCount > 0 ? `<b style="color:#2563eb;">${partCount}개</b>` : '<span style="color:#9ca3af;">0개</span>')}</td>
           <td>${r.active === false ? '<span class="admin-badge inactive">비활성</span>' : '<span class="admin-badge active">활성</span>'}</td>
           <td>${updatedAt}</td>
           <td style="text-align: right;">
@@ -16734,9 +16753,95 @@
         <input type="number" id="adminFormRackOrder" value="${defaultOrder}" min="0">
         <div class="field-hint">낮을수록 위에 표시됩니다 (팀 선택 시 다음 번호가 자동 입력됩니다)</div>
       </div>
+      <!-- (v25) 이 렉에 보관할 부품 선택 -->
+      <div class="admin-form-field">
+        <label>📦 이 렉에 보관할 부품 <span style="font-weight:600;color:#2563eb;"><span id="adminFormRackPartCount">0</span>개 선택</span></label>
+        <input type="text" id="adminFormRackPartSearch" placeholder="부품명/코드 검색 후 체크하세요" autocomplete="off" oninput="adminRackPartListRender()">
+        <div id="adminFormRackPartList" style="max-height:220px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:8px;margin-top:6px;"></div>
+        <div class="field-hint">체크한 부품의 <b>렉 위치</b>가 이 렉으로 저장되어 부품 메뉴에 바로 반영됩니다. 체크를 해제하면 배정이 풀립니다.</div>
+      </div>
     `;
+    // (v25) 부품 배정 상태 초기화 — 수정 모드면 현재 이 렉에 배정된 부품을 미리 체크
+    window._rackFormPartState = {
+      label: existing ? `${existing.team} - ${existing.name}` : '',
+      selected: new Set(),
+      initial: new Set(),
+      initialBuilt: false,
+      pollTimer: null
+    };
+    // 부품 데이터가 아직 로드 전이면 동기화 시작 (렉 메뉴만 먼저 연 경우)
+    if (!window._adminPartsLoadedOnce && typeof adminStartPartsSync === 'function') {
+      try { adminStartPartsSync(); } catch(e) {}
+    }
     document.getElementById('adminFormModal').classList.add('show');
-    setTimeout(() => document.getElementById('adminFormRackName')?.focus(), 100);
+    setTimeout(() => {
+      document.getElementById('adminFormRackName')?.focus();
+      window.adminRackPartListRender();
+    }, 100);
+  };
+
+  // (v25) 렉 모달 — 부품 목록 렌더링 (검색 시 전체 검색, 평소엔 선택된 부품만 표시)
+  window.adminRackPartListRender = function() {
+    const listEl = document.getElementById('adminFormRackPartList');
+    const st = window._rackFormPartState;
+    if (!listEl || !st) return;
+
+    // 부품 데이터 로딩 대기 (도착하면 자동 재렌더)
+    if (!window._adminPartsLoadedOnce) {
+      listEl.innerHTML = '<div style="padding:12px;font-size:12px;color:#9ca3af;">부품 목록 불러오는 중...</div>';
+      clearTimeout(st.pollTimer);
+      st.pollTimer = setTimeout(window.adminRackPartListRender, 600);
+      return;
+    }
+
+    // 최초 1회: 이 렉에 배정된 부품 자동 체크
+    if (!st.initialBuilt) {
+      st.initialBuilt = true;
+      if (st.label) {
+        (window._adminParts || []).forEach(p => {
+          if ((p.rack || '') === st.label) { st.selected.add(p.id); st.initial.add(p.id); }
+        });
+      }
+    }
+
+    const q = (document.getElementById('adminFormRackPartSearch')?.value || '').trim().toLowerCase();
+    const parts = window._adminParts || [];
+    let shown;
+    if (q) {
+      shown = parts.filter(p =>
+        (p.name || '').toLowerCase().includes(q) ||
+        (p.code || '').toLowerCase().includes(q)
+      ).slice(0, 30);
+    } else {
+      shown = parts.filter(p => st.selected.has(p.id));
+    }
+
+    if (shown.length === 0) {
+      listEl.innerHTML = `<div style="padding:12px;font-size:12px;color:#9ca3af;">${q ? '검색 결과가 없습니다' : '배정된 부품이 없습니다. 위 검색창에서 부품을 찾아 체크하세요.'}</div>`;
+    } else {
+      listEl.innerHTML = shown.map(p => {
+        const checked = st.selected.has(p.id);
+        const cur = p.rack || '';
+        const curInfo = cur && cur !== st.label
+          ? `<span style="color:#d97706;font-size:11px;margin-left:6px;">현재: ${escapeHtml(cur)}</span>` : '';
+        return `<label style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-bottom:1px solid #f3f4f6;cursor:pointer;font-size:13px;">
+          <input type="checkbox" ${checked ? 'checked' : ''} onchange="adminRackPartToggle('${p.id}')">
+          <span style="flex:1;">${escapeHtml(p.name || '')} ${p.code ? `<span style="color:#9ca3af;font-size:11px;">(${escapeHtml(p.code)})</span>` : ''}${curInfo}</span>
+          ${Number(p.price) > 0 ? `<span style="color:#6b7280;font-size:11px;">${Number(p.price).toLocaleString()}원</span>` : ''}
+        </label>`;
+      }).join('');
+    }
+    const cntEl = document.getElementById('adminFormRackPartCount');
+    if (cntEl) cntEl.textContent = st.selected.size;
+  };
+
+  // (v25) 렉 모달 — 부품 체크 토글
+  window.adminRackPartToggle = function(pid) {
+    const st = window._rackFormPartState;
+    if (!st) return;
+    if (st.selected.has(pid)) st.selected.delete(pid);
+    else st.selected.add(pid);
+    window.adminRackPartListRender();
   };
 
   // 렉 폼: 팀 변경 시 표시 순서를 그 팀의 다음 번호로 자동 갱신
@@ -16794,6 +16899,41 @@
       await adminLogHistory('racks', ref.id, 'create', null, { team, name, order });
       showToast('렉 등록 완료', 'success');
     }
+
+    // (v25) 체크한 부품들의 렉 위치 일괄 반영
+    // - 체크된 부품 → rack = "팀 - 렉명" (렉 이름/팀 변경 시 옛 라벨도 새 라벨로 자동 갱신)
+    // - 체크 해제된(원래 이 렉이던) 부품 → rack = '' (배정 해제)
+    // - 부품 데이터가 로드 전이면 안전하게 스킵 (기존 배정 보존)
+    try {
+      const st = window._rackFormPartState;
+      if (st && window._adminPartsLoadedOnce && st.initialBuilt) {
+        const newLabel = `${team} - ${name}`;
+        const oldLabel = st.label;  // 수정 전 라벨 (신규면 '')
+        const partsAll = window._adminParts || [];
+        let assigned = 0, cleared = 0;
+        for (const p of partsAll) {
+          const curRack = p.rack || '';
+          if (st.selected.has(p.id)) {
+            if (curRack !== newLabel) {
+              await updateDoc(doc(db, 'parts', p.id), { rack: newLabel, updatedAt: serverTimestamp(), updatedBy: user });
+              assigned++;
+            }
+          } else if (st.initial.has(p.id) || (oldLabel && curRack === oldLabel)) {
+            if (curRack) {
+              await updateDoc(doc(db, 'parts', p.id), { rack: '', updatedAt: serverTimestamp(), updatedBy: user });
+              cleared++;
+            }
+          }
+        }
+        if (assigned > 0 || cleared > 0) {
+          showToast(`부품 렉 배정 반영: ${assigned}건 배정${cleared > 0 ? `, ${cleared}건 해제` : ''}`, 'success');
+        }
+      }
+    } catch (e) {
+      console.warn('부품 렉 배정 반영 실패:', e);
+      showToast('렉은 저장됐으나 부품 배정 반영 중 오류: ' + (e.message || e), 'error');
+    }
+    window._rackFormPartState = null;
     adminCloseFormModal();
   }
 
@@ -23814,6 +23954,9 @@
           amount: (p.price || 0) * (p.qty || 1)
         })),
         partsTotal,
+        // (v25) 버그 수정: 수정 모드에서 새로 선택한 택배비(박스구매 등)도 저장
+        //        기존엔 수집 목록에 없어 폼에서 선택해도 케이스 금액에 반영 안 됐음
+        deliveryFee: parseInt(setEls('deliveryFee') || '0', 10) || 0,
       };
     };
 
@@ -23843,7 +23986,10 @@
         : isPaid
           ? `[추가입금] ${extraReason}`
           : (freeToDeposit
-              ? '[추가입금] 필터·구매 등 추가 비용 발생 → 입금대기'
+              // (v25) 버그 수정: 입금대기로 보낼 때도 상단에 기재한 재검수 답변을 함께 저장
+              //        기존엔 고정 문구로 덮여서 답변 내용이 증발했음
+              ? ('[추가입금] 필터·구매 등 추가 비용 발생 → 입금대기'
+                  + (reinspectAnswerForHistory ? `\n[재검수 답변] ${reinspectAnswerForHistory}` : ''))
               : (reinspectAnswerForHistory
                   ? `[재검수 답변] ${reinspectAnswerForHistory}`
                   : '[수리완료] 재검수 추가 점검 완료')),
@@ -23859,6 +24005,7 @@
       notes: formData.notes,
       partsUsed: formData.partsUsed,
       partsTotal: formData.partsTotal,
+      deliveryFee: formData.deliveryFee,  // (v25) 수정 모드 택배비 저장
       statusUpdatedAt: serverTimestamp(),
       statusUpdatedBy: NAS_USER || '관리자',
       updatedAt: serverTimestamp(),
@@ -23878,6 +24025,18 @@
       // 무상인데 필터·구매 등 추가 비용 → 입금대기 (수리완료 아님)
       const prevActionStatus = Array.isArray(c.actionStatus) ? c.actionStatus.slice() : [];
       updateData.actionStatus = dedupActionStatus([...prevActionStatus, '재검수완료', '추가입금요청']);
+      // (v25) 버그 수정: 입금대기 분기에서도 재검수 답변 누적 저장 (기존엔 누락)
+      if (reinspectAnswerForHistory) {
+        const prevAnswers = Array.isArray(c.reinspectAnswers) ? c.reinspectAnswers : [];
+        updateData.reinspectAnswers = [
+          ...prevAnswers,
+          {
+            answeredAt: new Date().toISOString(),
+            answeredBy: NAS_USER || '엔지니어',
+            answer: reinspectAnswerForHistory,
+          }
+        ];
+      }
     } else {
       // (v21) 무상 재검수 케이스: 라벨 누적 "재검수완료" + "수리완료"
       // (v23) dedup — 이미 actionStatus에 같은 라벨 있으면 1개만 유지
