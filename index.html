@@ -4104,7 +4104,7 @@
           <div class="field">
             <label>불량명 1<span class="required">*</span></label>
             <div class="defect-picker" id="defect1NamePicker">
-              <input type="text" id="defect1Name" class="defect-picker-input" placeholder="제품 선택 후 불량명 선택 (체크박스)" autocomplete="off" readonly onclick="openDefectPicker('name', 1)" data-defect-num="1">
+              <input type="text" id="defect1Name" class="defect-picker-input" placeholder="불량명 검색 (이름 일부 입력 또는 클릭)" autocomplete="off" onclick="openDefectPicker('name', 1)" oninput="onDefectPickerInput('name', 1)" data-defect-num="1">
               <button type="button" class="defect-picker-clear" id="defect1NameClear" onclick="event.stopPropagation();clearDefectPick('name', 1)" style="display:none;" title="선택 해제">×</button>
               <div class="defect-picker-panel" id="defect1NamePanel"></div>
             </div>
@@ -4136,7 +4136,7 @@
           <div class="field">
             <label>불량명 2</label>
             <div class="defect-picker" id="defect2NamePicker">
-              <input type="text" id="defect2Name" class="defect-picker-input" placeholder="제품 선택 후 불량명 선택 (체크박스)" autocomplete="off" readonly onclick="openDefectPicker('name', 2)" data-defect-num="2">
+              <input type="text" id="defect2Name" class="defect-picker-input" placeholder="불량명 검색 (이름 일부 입력 또는 클릭)" autocomplete="off" onclick="openDefectPicker('name', 2)" oninput="onDefectPickerInput('name', 2)" data-defect-num="2">
               <button type="button" class="defect-picker-clear" id="defect2NameClear" onclick="event.stopPropagation();clearDefectPick('name', 2)" style="display:none;" title="선택 해제">×</button>
               <div class="defect-picker-panel" id="defect2NamePanel"></div>
             </div>
@@ -4168,7 +4168,7 @@
           <div class="field">
             <label>불량명 3</label>
             <div class="defect-picker" id="defect3NamePicker">
-              <input type="text" id="defect3Name" class="defect-picker-input" placeholder="제품 선택 후 불량명 선택 (체크박스)" autocomplete="off" readonly onclick="openDefectPicker('name', 3)" data-defect-num="3">
+              <input type="text" id="defect3Name" class="defect-picker-input" placeholder="불량명 검색 (이름 일부 입력 또는 클릭)" autocomplete="off" onclick="openDefectPicker('name', 3)" oninput="onDefectPickerInput('name', 3)" data-defect-num="3">
               <button type="button" class="defect-picker-clear" id="defect3NameClear" onclick="event.stopPropagation();clearDefectPick('name', 3)" style="display:none;" title="선택 해제">×</button>
               <div class="defect-picker-panel" id="defect3NamePanel"></div>
             </div>
@@ -4200,7 +4200,7 @@
           <div class="field">
             <label>불량명 4</label>
             <div class="defect-picker" id="defect4NamePicker">
-              <input type="text" id="defect4Name" class="defect-picker-input" placeholder="제품 선택 후 불량명 선택 (체크박스)" autocomplete="off" readonly onclick="openDefectPicker('name', 4)" data-defect-num="4">
+              <input type="text" id="defect4Name" class="defect-picker-input" placeholder="불량명 검색 (이름 일부 입력 또는 클릭)" autocomplete="off" onclick="openDefectPicker('name', 4)" oninput="onDefectPickerInput('name', 4)" data-defect-num="4">
               <button type="button" class="defect-picker-clear" id="defect4NameClear" onclick="event.stopPropagation();clearDefectPick('name', 4)" style="display:none;" title="선택 해제">×</button>
               <div class="defect-picker-panel" id="defect4NamePanel"></div>
             </div>
@@ -4232,7 +4232,7 @@
           <div class="field">
             <label>불량명 5</label>
             <div class="defect-picker" id="defect5NamePicker">
-              <input type="text" id="defect5Name" class="defect-picker-input" placeholder="제품 선택 후 불량명 선택 (체크박스)" autocomplete="off" readonly onclick="openDefectPicker('name', 5)" data-defect-num="5">
+              <input type="text" id="defect5Name" class="defect-picker-input" placeholder="불량명 검색 (이름 일부 입력 또는 클릭)" autocomplete="off" onclick="openDefectPicker('name', 5)" oninput="onDefectPickerInput('name', 5)" data-defect-num="5">
               <button type="button" class="defect-picker-clear" id="defect5NameClear" onclick="event.stopPropagation();clearDefectPick('name', 5)" style="display:none;" title="선택 해제">×</button>
               <div class="defect-picker-panel" id="defect5NamePanel"></div>
             </div>
@@ -18974,7 +18974,15 @@
       });
     } else if (stage === '입금대기') {
       // 보상판매 케이스는 입금완료 시 처리대기로, 일반 유상은 수리대기로
-      if (c.bosangSale) {
+      if (window.isHairDryerIHD01 && window.isHairDryerIHD01(c) && !c.bosangSale) {
+        // (v26) 헤어드라이어 iHD01 — 수리 없이 교환 흐름: 입금완료 → 처리대기
+        buttons.push({
+          id: 'actHairDryerPayDone',
+          label: '✅ 입금완료 → 처리대기',
+          bg: '#1D9E75',
+          action: () => dashActionHairDryerPayDone(c)
+        });
+      } else if (c.bosangSale) {
         buttons.push({
           id: 'actBosangPayDone',
           label: '✅ 보상판매 입금완료 → 처리대기',
@@ -19040,6 +19048,14 @@
             label: '💳 해피콜완료 (박스구매 비용) → 입금대기',
             bg: '#2563eb',
             action: () => dashActionPaidHappycallToDeposit(c)
+          });
+        } else if (window.isHairDryerIHD01 && window.isHairDryerIHD01(c)) {
+          // (v26) 헤어드라이어 iHD01 무상 — 수리 아님, 교환 진행 → 처리대기
+          buttons.push({
+            id: 'actHairDryerToProcess',
+            label: '✅ 해피콜완료 (교환 진행) → 처리대기',
+            bg: '#1D9E75',
+            action: () => dashActionHairDryerToProcess(c)
           });
         } else {
           // 무상 + 택배비 없으면 → 완료
@@ -19193,6 +19209,55 @@
     await dashApplyStageChange(c, '해피콜대기', {
       note, role: 'engineer', actionLabel: '재검수답변완료',
       actionStatusOp: 'append', actionStatusValue: '재검수 답변완료'
+    });
+  }
+
+  // ===== (v26) 헤어드라이어 iHD01 전용 흐름 =====
+  // 헤어드라이어는 수리가 아닌 '교환 처리' 제품 — 보상판매와 동일하게 type을 '교환'으로
+  // 전환해서 처리대기 → 처리완료 → ERP 전산작업(교환/반품 탭) 흐름을 그대로 탄다.
+  //   무상:          해피콜대기 → [교환 진행] → 처리대기 → 처리완료 → 완료
+  //   유상/박스구매: 해피콜대기 → 입금대기 → [입금완료] → 처리대기 → 처리완료 → 완료
+  // 화이트/그레이, 띄어쓰기·표기 변형("헤어드라이어iHD01"/"헤어드라이어 iHD01") 모두 인식
+  window.isHairDryerIHD01 = function(nameOrCase) {
+    const nm = typeof nameOrCase === 'string'
+      ? nameOrCase
+      : ((nameOrCase && nameOrCase.product && nameOrCase.product.name) || '');
+    const norm = String(nm).replace(/[^가-힣a-zA-Z0-9]/g, '').toLowerCase();
+    return norm.includes('헤어드라이어') && norm.includes('ihd01');
+  };
+
+  // (v26) 무상 헤어드라이어: 해피콜대기 → 처리대기 (교환으로 전환)
+  async function dashActionHairDryerToProcess(c) {
+    if (!confirm('헤어드라이어 교환 진행으로 처리대기로 보낼까요?\n\n교환으로 변경되어 처리완료 후 ERP 전산작업(교환/반품)에 등록됩니다.')) return;
+    await dashApplyStageChange(c, '처리대기', {
+      note: dashGetActionNote(),
+      role: 'happycall',
+      actionLabel: '헤어드라이어 교환진행',
+      actionStatusOp: 'append',
+      actionStatusValue: '교환진행',
+      extraFields: {
+        hairDryerExchange: true,
+        type: '교환',
+        erpType: '교환'
+        // 보상판매와 달리 treatmentContent/deliveryFee는 보존 — 엔지니어 작성 내용이 ERP 양식에 필요
+      }
+    });
+  }
+
+  // (v26) 유상/박스구매 헤어드라이어: 입금대기 → [입금완료] → 처리대기 (교환으로 전환)
+  async function dashActionHairDryerPayDone(c) {
+    await dashApplyStageChange(c, '처리대기', {
+      note: dashGetActionNote(),
+      role: 'happycall',
+      actionLabel: '입금완료',
+      actionStatusOp: 'replace-deposit',
+      actionStatusValue: '입금완료',
+      extraFields: {
+        depositConfirmedAt: serverTimestamp(),
+        hairDryerExchange: true,
+        type: '교환',
+        erpType: '교환'
+      }
     });
   }
 
@@ -20288,8 +20353,8 @@
       { label: '수리내용',   value: treatmentErp,             mono: false, multiline: true  },
     ];
 
-    // 사용부품 — 보상판매 케이스는 제품명을 사용부품1로
-    if (c.bosangSale) {
+    // 사용부품 — 보상판매/헤어드라이어 교환 케이스는 제품명을 사용부품1로 (새 제품 출고)
+    if (c.bosangSale || c.hairDryerExchange) {
       const productName = product.name || '';
       if (productName) {
         fields.push({
@@ -20403,14 +20468,14 @@
         }
       } else {
         // 교환·반품
-        if (c.bosangSale || c.discardRequested) {
-          // 보상판매/폐기 — 새상품 내역 불필요, 전산입력만으로 완료
+        if (c.bosangSale || c.discardRequested || c.hairDryerExchange) {
+          // 보상판매/폐기/헤어드라이어 교환 — 새상품 내역 불필요, 전산입력만으로 완료
           updateData.newProductPending = false;
           updateData.newProductCompleted = true;
           updateData.erpPartsUploaded = true;
           updateData.erpPartsReadyForUpload = false;
           updateData.erpPartsUploadedAt = serverTimestamp();
-          updateData.erpPartsUploadedBy = 'system (자동: 보상판매/폐기)';
+          updateData.erpPartsUploadedBy = 'system (자동: ' + (c.hairDryerExchange ? '헤어드라이어 교환' : '보상판매/폐기') + ')';
         } else {
           // 일반 교환·반품 → 새상품 대기로 등록
           updateData.newProductPending = true;
@@ -23437,6 +23502,17 @@
         updateData.happycallStaff = NAS_USER;
       }
 
+      // (v26) 안전망 — AS 케이스가 해피콜완료로 이동하는데 ERP 표시가 빠진 경우 자동 보정
+      //       개별 버튼이 erpReadyForInput 세팅을 누락해도(과거 구버전 버그 유형)
+      //       공통 함수에서 기본값을 채워 'ERP 누락 복구 ①'이 원천적으로 생기지 않게 함.
+      //       - extraFields가 erpProcessed/erpReadyForInput을 직접 지정했으면 그 값을 존중
+      //       - 이미 전산입력 완료된 케이스(erpProcessed=true)는 건드리지 않음
+      if (newStage === '해피콜완료' && (c.type === 'AS' || !c.type) &&
+          updateData.erpProcessed === undefined && c.erpProcessed !== true &&
+          updateData.erpReadyForInput === undefined && c.erpReadyForInput !== true) {
+        updateData.erpReadyForInput = true;
+      }
+
       // 단순 status 처리:
       // - clearAllStatus: 양쪽 모두 비움 (해피콜완료)
       // - 그 외: 자기 역할 것만 비움 (다른 역할 status는 유지)
@@ -24534,6 +24610,19 @@
     let successCount = 0;
     for (let i = 0; i < allAttachments.length; i++) {
       const item = allAttachments[i];
+
+      // (v26) 이미 NAS에 업로드된 파일(임시저장 복원분) — 재업로드 생략, 성공으로 처리
+      if (item.nasPath) {
+        successCount++;
+        results.push({ autoName: item.autoName, success: true, nasPath: item.nasPath });
+        continue;
+      }
+      // 원본 File 객체가 없으면 업로드 불가 (방어)
+      if (!item.file) {
+        results.push({ autoName: item.autoName, success: false });
+        continue;
+      }
+
       statusEl.textContent = `📤 NAS에 파일 업로드 중... (${i + 1}/${allAttachments.length}) ${item.autoName}`;
 
       try {
@@ -24792,8 +24881,26 @@
         return true;
       });
 
+      // (v26) 불량명 검색 — 입력 키워드로 필터 (공백 무시, 대소문자 무시)
+      //       선택된 이름이 입력칸에 그대로 있으면 표시 텍스트라 필터 안 함
+      const nameInputEl = document.getElementById(`defect${defectNum}Name`);
+      const rawNameKeyword = (nameInputEl?.value || '').trim();
+      const currentSelName = window._defectPickState[defectNum]?.name || '';
+      const nameKeyword = (rawNameKeyword && rawNameKeyword !== currentSelName)
+        ? rawNameKeyword.toLowerCase().replace(/\s+/g, '')
+        : '';
+      if (nameKeyword) {
+        candidates = candidates.filter(d =>
+          String(d.name || '').toLowerCase().replace(/\s+/g, '').includes(nameKeyword)
+        );
+      }
+
       if (candidates.length === 0) {
-        panel.innerHTML = '<div class="defect-picker-empty">이 제품에 등록된 불량명이 없습니다<br><span style="font-size:11px;">(관리자 메뉴 → 불량명 목록에서 등록)</span></div>';
+        if (nameKeyword) {
+          panel.innerHTML = `<div class="defect-picker-empty">"${escapeHtml(rawNameKeyword)}" 검색 결과가 없습니다</div>`;
+        } else {
+          panel.innerHTML = '<div class="defect-picker-empty">이 제품에 등록된 불량명이 없습니다<br><span style="font-size:11px;">(관리자 메뉴 → 불량명 목록에서 등록)</span></div>';
+        }
         return;
       }
 
@@ -26382,25 +26489,41 @@
   }
 
   // 모든 자동 파일명 재생성 (불량명/시리얼 입력 변경 시 호출)
+  // (v26) 이미 NAS에 업로드된 파일(nasPath 있음)은 이름 재생성 제외 — 경로가 깨지면 복원 불가
   function refreshAllAutoNames() {
     for (let n = 1; n <= 5; n++) {
       defectAttachments[n].forEach((f, i) => {
+        if (f.nasPath) return;
         const ext = (f.originalName.split('.').pop() || '').toLowerCase();
         f.autoName = generateDefectFileName(n, ext, i + 1);
       });
       renderDefectAttachList(n);
     }
     normalAttachments.forEach((f, i) => {
+      if (f.nasPath) return;
       const ext = (f.originalName.split('.').pop() || '').toLowerCase();
       f.autoName = generateNormalFileName(ext, i + 1);
     });
     renderNormalFileList();
     // (v24) 회수품목 사진 파일명도 갱신 (고객명/회수품목 변경 반영)
     recoveryAttachments.forEach((f, i) => {
+      if (f.nasPath) return;
       const ext = (f.originalName.split('.').pop() || '').toLowerCase();
       f.autoName = generateRecoveryFileName(ext, i + 1);
     });
     renderRecoveryFileList();
+  }
+
+  // (v26) NAS 업로드 결과(nasPath)를 메모리 첨부 배열에 반영 — 임시저장 보존/재업로드 방지용
+  function markAttachmentsUploaded(results) {
+    const byName = {};
+    (results || []).forEach(r => { if (r && r.success) byName[r.autoName] = r.nasPath || ''; });
+    const mark = f => {
+      if (byName[f.autoName] !== undefined) { f.nasPath = byName[f.autoName]; f.uploaded = true; }
+    };
+    for (let n = 1; n <= 5; n++) defectAttachments[n].forEach(mark);
+    normalAttachments.forEach(mark);
+    recoveryAttachments.forEach(mark);
   }
 
   // 시리얼/불량명/고객명 입력 변경 시 자동 파일명 갱신
@@ -27137,6 +27260,37 @@
         draftBtn.textContent = '저장 중...';
       }
 
+      // (v26) 첨부파일 NAS 업로드 — 임시저장에서도 회수품목/불량/정상작동 사진·영상 보존
+      //       (기존엔 브라우저 메모리에만 있어 임시저장 후 다시 불러오면 사라지던 문제)
+      //       이미 업로드된 파일은 uploadFilesToNAS가 자동 생략하므로 중복 업로드 없음
+      const _draftAtts = getAllAttachments();
+      if (_draftAtts.length > 0) {
+        if (draftBtn) draftBtn.textContent = '파일 업로드 중...';
+        const upRes = await uploadFilesToNAS();
+        if (!upRes.ok) {
+          showToast('파일 업로드에 실패했습니다. 다시 시도해주세요.', 'error');
+          if (draftBtn) { draftBtn.disabled = false; draftBtn.textContent = '💾 임시저장'; }
+          return;
+        }
+        markAttachmentsUploaded(upRes.uploadedFiles);
+        if (draftBtn) draftBtn.textContent = '저장 중...';
+      }
+      // 업로드 완료된 첨부 메타 저장 (nasPath 있는 것만 복원 가능)
+      data.attachments = getAllAttachments()
+        .filter(f => f.nasPath)
+        .map(f => ({
+          originalName: f.originalName || '',
+          autoName: f.autoName || '',
+          size: Number(f.size) || 0,
+          type: f.type || '',
+          source: f.source,
+          defectNum: f.defectNum || 0,
+          uploaded: true,
+          nasPath: f.nasPath,
+          shareUrl: ''
+        }));
+      data.attachmentCount = data.attachments.length;
+
       // 임시저장 ID — 기존 임시저장에서 불러온 거면 그 ID 유지, 아니면 정식 AS 번호와 동일 순번
       const isExistingDraft = !!window._draftModeCaseId;
       let draftId, dailySeq, datePart;
@@ -27249,11 +27403,45 @@
       if (typeof dashFillFormFromCase === 'function') {
         try { dashFillFormFromCase(c); } catch (e) { console.warn('폼 채우기 실패:', e); }
       }
+      // (v26) 첨부파일 복원 — 임시저장 때 NAS에 올라간 사진/영상 메타 복원
+      try { asDraftRestoreAttachments(c); } catch (e) { console.warn('첨부 복원 실패:', e); }
       // 임시저장 ID 배너 표시 (어느 ID에 덮어쓰일지 사용자가 알 수 있게)
       dashShowDraftBanner(c._docId || c.id);
       window.scrollTo(0, 0);
     }, 150);
   };
+
+  // (v26) 임시저장 첨부 복원 — NAS에 업로드된 메타를 폼 첨부 목록으로 되살림
+  //       원본 File 객체는 복원 불가하지만 nasPath가 있어 정식 접수 시 재업로드 없이 그대로 사용됨
+  function asDraftRestoreAttachments(c) {
+    defectAttachments = { 1: [], 2: [], 3: [], 4: [], 5: [] };
+    normalAttachments = [];
+    recoveryAttachments = [];
+    (Array.isArray(c.attachments) ? c.attachments : []).forEach(a => {
+      if (!a || !a.nasPath) return; // NAS에 없는 항목은 복원 불가
+      const item = {
+        file: null,
+        originalName: a.originalName || a.autoName || '',
+        autoName: a.autoName || '',
+        size: Number(a.size) || 0,
+        type: a.type || '',
+        nasPath: a.nasPath,
+        uploaded: true
+      };
+      const src = String(a.source || '');
+      if (src.startsWith('defect')) {
+        const n = Math.min(5, Math.max(1, Number(a.defectNum) || 1));
+        defectAttachments[n].push(item);
+      } else if (src === 'recovery') {
+        recoveryAttachments.push(item);
+      } else {
+        normalAttachments.push(item);
+      }
+    });
+    for (let n = 1; n <= 5; n++) renderDefectAttachList(n);
+    renderNormalFileList();
+    renderRecoveryFileList();
+  }
 
   // 임시저장 진행중 배너
   function dashShowDraftBanner(draftId) {
@@ -27377,6 +27565,13 @@
       return showToastAndFocus('시리얼넘버를 입력하세요', 'serialNumber');
     }
 
+    // (v26) 사용부품: 필수 — 부품 누락 접수 방지
+    //       면제: 확인요청 / 헤어드라이어 iHD01 화이트·그레이 (수리 아님 — 교환 흐름)
+    if (!isReinspect && selectedParts.length === 0 &&
+        !(window.isHairDryerIHD01 && window.isHairDryerIHD01(productName))) {
+      return showToast('사용부품을 1개 이상 선택하세요 (필수)', 'error');
+    }
+
     // 확인요청 사유: 확인요청 모드에서는 필수
     let confirmReasonText = '';
     if (isReinspect) {
@@ -27402,7 +27597,9 @@
       const _rawCat = document.getElementById('productCategory')?.value || '';
       const _catNorm = String(_rawCat).replace(/[^가-힣a-zA-Z0-9]/g, '');
       const isRobotSeasonal = _catNorm.includes('로봇') || _catNorm.includes('계절가전');
-      if (!hasDefect)   return showToast('불량사진/영상을 첨부하세요 (필수)', 'error');
+      // (v26) 불량명1이 '무증상'이면 불량사진/영상 필수 해제 (촬영할 증상이 없음)
+      const _isNoSymptom = String(defect1Name || '').includes('무증상');
+      if (!hasDefect && !_isNoSymptom)   return showToast('불량사진/영상을 첨부하세요 (필수)', 'error');
       if (!hasNormal && !isRobotSeasonal) return showToast('정상작동영상을 첨부하세요 (필수)', 'error');
       if (!hasRecovery) return showToast('회수품목 사진을 첨부하세요 (필수)', 'error');
     }
@@ -27604,6 +27801,27 @@
         // (v15) 임시저장 → 정식 접수 전환 시 플래그 제거
         _isDraft: false
       };
+
+      // (v26) 방문AS 직접수령 — ERP 전산작업은 엔지니어가 현장에서 직접 처리(자동 erpProcessed=true)하므로
+      //       사용부품·포장재를 접수 시점에 바로 'ERP 사용부품 업로드' 대기열에 등록한다.
+      //       (기존엔 이 처리가 빠져 있어 직접수령 케이스가 'ERP 누락 복구 ②'에 계속 잡히던 버그)
+      //       규칙은 [전산입력 완료] 버튼(dashErpWorkMarkDone)과 동일:
+      //       부품/포장재 있으면 업로드 대기, 없으면 자동 업로드완료
+      if (erpProcessed) {
+        caseData.erpProcessedAt = serverTimestamp();
+        const _dirRows = (typeof dashBuildErpPartsRows === 'function') ? dashBuildErpPartsRows(caseData) : [];
+        if (_dirRows.length > 0) {
+          caseData.erpPartsRows = _dirRows;
+          caseData.erpPartsUploaded = false;
+          caseData.erpPartsReadyForUpload = true;
+        } else {
+          caseData.erpPartsRows = [];
+          caseData.erpPartsUploaded = true;
+          caseData.erpPartsReadyForUpload = false;
+          caseData.erpPartsUploadedAt = serverTimestamp();
+          caseData.erpPartsUploadedBy = 'system (자동: 사용부품 없음 — 직접수령)';
+        }
+      }
 
       await setDoc(doc(db, "cases", caseId), caseData);
 
@@ -29169,6 +29387,19 @@
 
       // 자동 파일명 생성용 텍스트 (디스플레이)
       const fnText = document.getElementById('erp_fnText').textContent || '';
+
+      // (v26) 불량부품1 자동입력 보정 — 자동입력(초기불량/오배송/단순변심,
+      //       재출고+무증상·관리미흡)은 입력칸 값만 채우고 저장 변수(_erpSelectedParts1)는
+      //       비워둬서 ERP 전산작업에서 불량부품1이 (비어있음)으로 나오던 버그.
+      //       picker 선택이 없고 입력칸에 값이 있으면 그 값을 저장에 포함한다.
+      //       ("✓ ... 외 N개" 같은 표시용 텍스트는 placeholder라 여기 안 걸림)
+      if (Array.isArray(window._erpSelectedParts1) && window._erpSelectedParts1.length === 0) {
+        const _p1El = document.getElementById('erp_defect1Part');
+        const _p1Val = _p1El ? _p1El.value.trim() : '';
+        if (_p1Val && !/외 \d+개$/.test(_p1Val)) {
+          window._erpSelectedParts1 = [_p1Val];
+        }
+      }
 
       const caseData = {
         id: caseId,
