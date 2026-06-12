@@ -4928,6 +4928,13 @@
   // 사용포장재 상태 (현재 탭 + 선택 목록)
   let currentPkgTab = 'box';        // 'box' | 'protector'
   let selectedPackaging = [];        // 선택된 포장재 이름 배열
+  let pkgQtyOverride = {};           // (v26) 포장재 수량 직접 수정값 (이름 → 수량)
+  // (v26) 포장재 현재 수량 — 직접 수정값 우선, 없으면 마스터 기본수량, 없으면 1
+  function currentPkgQty(name) {
+    if (pkgQtyOverride[name] != null) return Number(pkgQtyOverride[name]) || 1;
+    const found = (window._adminPackaging || []).find(p => p.name === name);
+    return (found && found.defaultQty != null) ? (Number(found.defaultQty) || 1) : 1;
+  }
 
   // 첨부파일 상태 (5-1 NAS 업로드용 - File 객체 보관)
   // 5-1 개선: 불량명별 + 정상작동 영상으로 분리 저장
@@ -18997,6 +19004,17 @@
           action: () => dashActionDepositDone(c)
         });
       }
+      // (v26) 추가입금 안내 케이스 — 고객 거부 시 입금 없이 수리대기 복귀
+      if (c.extraPaymentRequested === true && !c.bosangSale &&
+          !(window.isHairDryerIHD01 && window.isHairDryerIHD01(c))) {
+        buttons.push({
+          id: 'actExtraPayDeclined',
+          label: '↩️ 추가입금 거부 → 수리대기 (내용 필수)',
+          bg: '#6b7280',
+          needsNote: true,
+          action: () => dashActionExtraPayDeclined(c)
+        });
+      }
       // (유상) 협의필요 → 확인요청
       if (isPaid) {
         buttons.push({
@@ -19209,6 +19227,30 @@
     await dashApplyStageChange(c, '해피콜대기', {
       note, role: 'engineer', actionLabel: '재검수답변완료',
       actionStatusOp: 'append', actionStatusValue: '재검수 답변완료'
+    });
+  }
+
+  // (v26) 추가입금 거부 — 고객이 추가입금(보상판매 권장 등)을 거부한 경우
+  //       입금 기록 없이 수리대기로 복귀시켜 기존 수리품 출고를 진행한다.
+  //       ([입금완료]로 우회하면 실제 입금이 없는데 입금 기록이 남는 문제 방지)
+  async function dashActionExtraPayDeclined(c) {
+    const note = dashGetActionNote();
+    if (!note) {
+      showToast('거부 사유/안내 내용을 입력하세요 (필수)', 'error');
+      const el = document.getElementById('dashActionNote');
+      if (el) el.focus();
+      return;
+    }
+    await dashApplyStageChange(c, '수리대기', {
+      note,
+      role: 'happycall',
+      actionLabel: '추가입금 거부',
+      actionStatusOp: 'append',
+      actionStatusValue: '추가입금거부',
+      extraFields: {
+        extraPaymentDeclined: true,
+        extraPaymentDeclinedAt: serverTimestamp()
+      }
     });
   }
 
@@ -20571,7 +20613,11 @@
     packaging.forEach(p => {
       const name = typeof p === 'string' ? p : (p.name || '');
       if (!name) return;
-      const qty = typeof p === 'object' ? (Number(p.qty || p.quantity) || 1) : 1;
+      let qty = typeof p === 'object' ? (Number(p.qty || p.quantity) || 1) : 1;
+      // (v26) AS 폼 저장 형태(이름 배열)는 packagingDetails의 수량 사용 — 수정 수량 반영
+      if (typeof p === 'string' && pkgDetailByName[name] && pkgDetailByName[name].qty != null) {
+        qty = Number(pkgDetailByName[name].qty) || 1;
+      }
       // 코드 조회 우선순위:
       //   1) p.code (객체에 직접 들어있는 경우)
       //   2) packagingDetails에 매칭되는 객체의 code (AS 폼 저장 형태)
@@ -23909,6 +23955,11 @@
       if (c.packaging && Array.isArray(c.packaging) && c.packaging.length > 0) {
         setTimeout(() => {
           selectedPackaging = c.packaging.slice();
+          // (v26) 저장된 포장재 수량 복원
+          pkgQtyOverride = {};
+          (Array.isArray(c.packagingDetails) ? c.packagingDetails : []).forEach(d => {
+            if (d && d.name && d.qty != null) pkgQtyOverride[d.name] = Number(d.qty) || 1;
+          });
           if (typeof renderPkgTags === 'function') renderPkgTags();
           if (typeof updatePkgCounts === 'function') updatePkgCounts();
           if (typeof renderQtyTable === 'function') renderQtyTable();
@@ -26233,14 +26284,14 @@
       selectedPackaging.forEach(pkgName => {
         const found = window._adminPackaging.find(p => p.name === pkgName);
         const pkgPrice = found ? (Number(found.price || 0)) : 0;
-        const pkgQty = (found && found.defaultQty != null) ? Number(found.defaultQty) : 1;
+        const pkgQty = currentPkgQty(pkgName);  // (v26) 직접 수정값 우선
         const pkgType = found ? (found.type || '') : '';
         pkgItems.push({ name: pkgName, price: pkgPrice, qty: pkgQty, type: pkgType });
       });
     } else if (selectedPackaging.length > 0) {
       // _adminPackaging이 아직 로드 안 된 경우에도 이름은 표시
       selectedPackaging.forEach(pkgName => {
-        pkgItems.push({ name: pkgName, price: 0, qty: 1, type: '' });
+        pkgItems.push({ name: pkgName, price: 0, qty: currentPkgQty(pkgName), type: '' });  // (v26)
       });
     }
 
@@ -26290,7 +26341,13 @@
         <div class="qty-name">${icon} ${escapeHtml(pkg.name)}</div>
         <div class="qty-rack"><span style="color:#9ca3af;">-</span></div>
         <div class="qty-price">${formatPrice(pkg.price)}</div>
-        <div style="text-align:center;font-size:11px;font-weight:700;">${pkg.qty}</div>
+        <div style="text-align:center;">
+          <span class="qty-input-group">
+            <button type="button" data-pkgaction="dec" data-pkg="${escapeHtml(pkg.name)}">−</button>
+            <input type="number" min="1" max="99" value="${pkg.qty}" data-pkg="${escapeHtml(pkg.name)}">
+            <button type="button" data-pkgaction="inc" data-pkg="${escapeHtml(pkg.name)}">+</button>
+          </span>
+        </div>
         <div class="qty-amount" style="display:flex;align-items:center;justify-content:flex-end;gap:6px;">
           ${formatPrice(amount)}
           <span class="fee-auto-tag">포장재</span>
@@ -26326,6 +26383,30 @@
 
     partsQtyTableEl.innerHTML = html;
     partsQtyTableEl.classList.add('open');
+
+    // (v26) 포장재(보호재/박스) 수량 컨트롤 — 부품과 동일하게 −/+/직접입력
+    partsQtyTableEl.querySelectorAll('button[data-pkgaction]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const name = btn.dataset.pkg;
+        const cur = currentPkgQty(name);
+        let v = cur;
+        if (btn.dataset.pkgaction === 'inc' && cur < 99) v = cur + 1;
+        else if (btn.dataset.pkgaction === 'dec' && cur > 1) v = cur - 1;
+        pkgQtyOverride[name] = v;
+        renderQtyTable();
+      });
+    });
+    partsQtyTableEl.querySelectorAll('input[data-pkg]').forEach(input => {
+      const commitPkgQty = () => {
+        let v = parseInt(input.value) || 1;
+        if (v < 1) v = 1;
+        if (v > 99) v = 99;
+        pkgQtyOverride[input.dataset.pkg] = v;
+        renderQtyTable();
+      };
+      input.addEventListener('change', commitPkgQty);
+      input.addEventListener('blur', commitPkgQty);
+    });
 
     // 수량 +/- 버튼
     partsQtyTableEl.querySelectorAll('button[data-action]').forEach(btn => {
@@ -27000,6 +27081,7 @@
         const name = el.dataset.name;
         if (selectedPackaging.includes(name)) {
           selectedPackaging = selectedPackaging.filter(p => p !== name);
+          delete pkgQtyOverride[name];  // (v26)
         } else {
           selectedPackaging.push(name);
         }
@@ -27027,6 +27109,7 @@
     pkgTagsEl.querySelectorAll('.remove-x').forEach(btn => {
       btn.addEventListener('click', () => {
         selectedPackaging = selectedPackaging.filter(p => p !== btn.dataset.name);
+        delete pkgQtyOverride[btn.dataset.name];  // (v26)
         renderPkgTags();
         if (pkgPanelEl.classList.contains('open')) renderPkgPanel();
         updatePkgCounts();
@@ -27230,9 +27313,10 @@
       // 포장재 상세도 같이 (수정 모드 정합성)
       data.packagingDetails = selectedPackaging.map(name => {
         const found = (window._adminPackaging || []).find(p => p.name === name);
-        if (!found) return { name, code: '', price: 0, qty: 1, amount: 0, type: '' };
+        const qty = currentPkgQty(name);  // (v26)
+        if (!found) return { name, code: '', price: 0, qty, amount: 0, type: '' };
         const price = Number(found.price) || 0;
-        return { name, code: found.code || '', price, qty: 1, amount: price, type: found.type || '' };
+        return { name, code: found.code || '', price, qty, amount: price * qty, type: found.type || '' };
       });
     }
 
@@ -27762,14 +27846,14 @@
           const found = (window._adminPackaging || []).find(p => p.name === name);
           if (!found) return { name, code: '', price: 0, qty: 1, amount: 0, type: '' };
           const price = Number(found.price || 0);
-          const qty = found.defaultQty != null ? Number(found.defaultQty) : 1;
+          const qty = currentPkgQty(name);  // (v26) 직접 수정 수량 반영
           return { name, code: found.code || '', price, qty, amount: price * qty, type: found.type || '' };
         }),
         packagingTotal: selectedPackaging.reduce((sum, name) => {
           const found = (window._adminPackaging || []).find(p => p.name === name);
           if (!found) return sum;
           const price = Number(found.price || 0);
-          const qty = found.defaultQty != null ? Number(found.defaultQty) : 1;
+          const qty = currentPkgQty(name);  // (v26)
           return sum + price * qty;
         }, 0),
         // 첨부파일 메타데이터 (5-1: NAS 업로드 결과 반영)
@@ -27997,6 +28081,7 @@
 
     // 포장재 초기화
     selectedPackaging = [];
+    pkgQtyOverride = {};  // (v26) 포장재 수량 수정값 초기화
     currentPkgTab = 'box';
     document.querySelectorAll('.pkg-tab').forEach(t => {
       t.classList.toggle('active', t.dataset.pkgCat === 'box');
