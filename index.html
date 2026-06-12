@@ -20191,7 +20191,10 @@
 
   // ERP 수리내용 양식 생성 (모달 + ERP 전산 작업 공통)
   // 형식: 엔지니어/해피콜 / 1.입고 품목 / 2.입고일 / 3.처리내용 / 4.필수 확인사항 / 5.출고일 / 6.발생 금액
-  function dashBuildErpTreatmentText(c) {
+  // (v26) includeNotes=true일 때만 주고받은내용을 3.처리내용에 합침
+  //        - 케이스 상세 모달: false (아래 소통 내역에 이미 표시 — 중복 방지)
+  //        - ERP 전산작업 화면/복사: true
+  function dashBuildErpTreatmentText(c, includeNotes) {
     const product = c.product || {};
     const repairType = c.repairType || '';
     const isFreeRepair = !repairType.includes('유상');
@@ -20237,6 +20240,29 @@
       }
     }
     const treatmentText = c.treatmentContent || '-';
+
+    // (v26) 주고받은 내용 — 별도 블록이 아니라 3.처리내용 안에 합쳐서 표시
+    //       (ERP 담당자가 처리내용 한 칸으로 전체 맥락을 복사/입력할 수 있게)
+    const _noteHistory = includeNotes
+      ? (Array.isArray(c.statusHistory) ? c.statusHistory : []).filter(h => h && h.note && h.note.trim() !== '')
+      : [];
+    let noteBlockText = '';
+    if (_noteHistory.length > 0) {
+      const noteLines = ['[주고받은내용]'];
+      _noteHistory.forEach(h => {
+        const roleLabel = h.role === 'happycall' ? '해피콜' : '엔지니어';
+        const byName = window.getDisplayName ? window.getDisplayName(h.changedBy) : (h.changedBy || '');
+        const dateStr = h.changedAt ? (() => {
+          try {
+            const d = new Date(h.changedAt);
+            return `${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
+          } catch { return ''; }
+        })() : '';
+        noteLines.push(`${roleLabel} · ${byName} ${h.action || ''} ${dateStr}`.trim());
+        noteLines.push(h.note.trim());
+      });
+      noteBlockText = noteLines.join('\n');
+    }
     const notesText = c.notes || c.notesContent || '-';
     let amountText = '';
     if (isFreeRepair) {
@@ -20290,7 +20316,7 @@
       '엔지니어/해피콜',
       `1.입고 품목: ${intakeItems}`,
       `2.입고일: ${intakeDateText}`,
-      `3.처리내용: ${treatmentText}`,
+      `3.처리내용: ${treatmentText}${noteBlockText ? '\n\n' + noteBlockText : ''}`,
       `4.필수 확인사항: ${notesText}`,
       `5.출고일: ${releaseDateText}`,
       `6.발생 금액: ${amountText}`,
@@ -20299,25 +20325,7 @@
       lines.push(`7.${extraDefects.join(', ')}`);
     }
 
-    // 주고받은 내용 — statusHistory에서 note 있는 이력 추가
-    const history = Array.isArray(c.statusHistory) ? c.statusHistory : [];
-    const noteHistory = history.filter(h => h && h.note && h.note.trim() !== '');
-    if (noteHistory.length > 0) {
-      lines.push('');
-      lines.push('주고받은내용');
-      noteHistory.forEach(h => {
-        const roleLabel = h.role === 'happycall' ? '해피콜' : '엔지니어';
-        const byName = window.getDisplayName ? window.getDisplayName(h.changedBy) : (h.changedBy || '');
-        const dateStr = h.changedAt ? (() => {
-          try {
-            const d = new Date(h.changedAt);
-            return `${String(d.getMonth()+1).padStart(2,'0')}/${String(d.getDate()).padStart(2,'0')} ${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}`;
-          } catch { return ''; }
-        })() : '';
-        lines.push(`${roleLabel} · ${byName} ${h.action || ''} ${dateStr}`.trim());
-        lines.push(h.note.trim());
-      });
-    }
+    // (v26) 주고받은 내용은 3.처리내용에 합쳐 표시 — 별도 꼬리 블록 제거
 
     return lines.join('\n');
   }
@@ -20342,7 +20350,7 @@
     }
 
     // 수리내용 — ERP 양식 (6줄)
-    const treatmentErp = dashBuildErpTreatmentText(c);
+    const treatmentErp = dashBuildErpTreatmentText(c, true);  // (v26) ERP 작업에서는 주고받은내용 포함
 
     // 기본 필드
     const fields = [
@@ -27809,6 +27817,22 @@
       //       부품/포장재 있으면 업로드 대기, 없으면 자동 업로드완료
       if (erpProcessed) {
         caseData.erpProcessedAt = serverTimestamp();
+        // (v26) 처리량 집계 보정 — 직접수령은 접수 즉시 해피콜완료가 되는데
+        //       statusHistory/statusUpdatedAt이 없어 팀현황 처리량·AS 일별 '당일 완료'에서
+        //       빠지던 버그. 전환 이력을 접수 시점에 기록한다.
+        caseData.statusUpdatedAt = serverTimestamp();
+        caseData.statusUpdatedBy = NAS_USER || '엔지니어';
+        caseData.statusHistory = [{
+          changedAt: new Date().toISOString(),
+          changedBy: NAS_USER || '엔지니어',
+          role: 'engineer',
+          fromStage: '',
+          toStage: '해피콜완료',
+          fromStatus: '',
+          toStatus: '',
+          note: '',
+          action: '접수 (직접수령 — 자동 완료)'
+        }];
         const _dirRows = (typeof dashBuildErpPartsRows === 'function') ? dashBuildErpPartsRows(caseData) : [];
         if (_dirRows.length > 0) {
           caseData.erpPartsRows = _dirRows;
@@ -29967,6 +29991,40 @@
       console.error('팀현황 - 상태 이력 로드 실패:', e);
     }
 
+    // (v26) 진행 중 세션 보정 — userStatusHistory에는 '끝난 구간'만 기록되므로
+    //       조회 기간이 현재 시각을 포함하면(당일 실적 등) 지금 진행 중인 상태의
+    //       경과 시간을 더한다. (근무중 명단 지속시간과 당일 실적 근무시간이
+    //       서로 다르게 보이던 문제 — 진행 중 근무 시간이 실적에 빠져 있었음)
+    try {
+      const nowMs = Date.now();
+      const _stMs = (start instanceof Date ? start : new Date(start)).getTime();
+      const _enMs = (end instanceof Date ? end : new Date(end)).getTime();
+      if (nowMs >= _stMs && nowMs <= _enMs) {
+        const liveMap = (window._teamStatusState && window._teamStatusState.currentStatuses) || {};
+        Object.keys(liveMap).forEach(uid => {
+          const cs = liveMap[uid];
+          if (!cs || !cs.status) return;
+          const mapped = tsMapStatus(cs.status);
+          if (!mapped) return;
+          let segMs = 0;
+          if (cs.statusChangedAt instanceof Date) segMs = cs.statusChangedAt.getTime();
+          else if (cs.statusChangedAt && cs.statusChangedAt.toDate) segMs = cs.statusChangedAt.toDate().getTime();
+          else if (cs.statusChangedAt) segMs = new Date(cs.statusChangedAt).getTime();
+          if (!segMs || isNaN(segMs)) return;
+          const fromMs = Math.max(segMs, _stMs);
+          const dur = Math.floor((nowMs - fromMs) / 60000);
+          if (dur <= 0) return;
+          const s = ensureUser(uid);
+          if (mapped === 'working') s.workMin += dur;
+          else if (mapped === 'break') s.breakMin += dur;
+          else if (mapped === 'toilet') s.toiletMin += dur;
+          else if (mapped === 'away') s.awayMin += dur;
+        });
+      }
+    } catch (e) {
+      console.warn('팀현황 - 진행중 세션 보정 실패:', e);
+    }
+
     // 1-1) 지각 카운트 계산 — 직원별 startTime 기준
     const users = window._teamStatusState.users || [];
     users.forEach(u => {
@@ -29994,10 +30052,11 @@
     try {
       const startMs = (start instanceof Date ? start : new Date(start)).getTime();
       const endMs   = (end   instanceof Date ? end   : new Date(end)).getTime();
+      // (v26) type=='AS' 쿼리 필터 제거 — 보상판매/헤어드라이어(교환 전환)도 엔지니어가
+      //       처리한 AS 입고분이므로 처리량에 포함. JS에서 필터링.
       const q2 = query(
         collection(db, 'cases'),
-        where('stage', '==', '해피콜완료'),
-        where('type', '==', 'AS')
+        where('stage', '==', '해피콜완료')
       );
       const snap2 = await getDocs(q2);
       const usersAll = window._teamStatusState.users || [];
@@ -30008,6 +30067,8 @@
       });
       snap2.forEach(d => {
         const r = d.data();
+        const isAsOrigin = r.type === 'AS' || r.bosangSale === true || r.hairDryerExchange === true;
+        if (!isAsOrigin) return;
         // statusUpdatedAt 기준 날짜 필터
         let ts = null;
         if (r.statusUpdatedAt && r.statusUpdatedAt.toDate) ts = r.statusUpdatedAt.toDate().getTime();
@@ -31099,7 +31160,10 @@
     const out = {};
     const cases = window.dashAllCases || [];
     cases.forEach(c => {
-      if (!c || c.type !== 'AS') return;
+      // (v26) AS로 입고된 케이스 전부 집계 — 보상판매/헤어드라이어는 type이 '교환'으로
+      //       전환되지만 AS 입고분이므로 완료에 포함해야 미처리 계산이 맞음
+      const isAsOrigin = c && (c.type === 'AS' || c.bosangSale === true || c.hairDryerExchange === true);
+      if (!isAsOrigin) return;
       const cat = c.product && c.product.category;
       if (window.inventoryGetTeamForCategory(cat) !== team) return;
       const hist = Array.isArray(c.statusHistory) ? c.statusHistory : [];
@@ -31119,9 +31183,13 @@
     const map = {};
     const ensure = (p)=> (map[p] = map[p] || { intake:0, done:0, open:0 });
     try {
-      const snap = await getDocs(query(collection(db, 'cases'), where('type', '==', 'AS')));
+      // (v26) type=='AS' 쿼리 필터 제거 — 보상판매/헤어드라이어(교환 전환)도 AS 입고분이라
+      //       완료/미처리 집계에 포함해야 함. JS에서 필터링.
+      const snap = await getDocs(collection(db, 'cases'));
       snap.forEach(d => {
         const c = d.data();
+        const isAsOrigin = c.type === 'AS' || c.bosangSale === true || c.hairDryerExchange === true;
+        if (!isAsOrigin) return;
         const cat = c.product && c.product.category;
         if (team && team !== 'all' && window.inventoryGetTeamForCategory(cat) !== team) return;
         const p = (c.product && c.product.name) || '(미지정)';
