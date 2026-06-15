@@ -19497,8 +19497,11 @@
       // 반품: 단순변심 분기
       const isSimpleReturn = isReturn && (c.erpReason === '단순변심');
       if (isSimpleReturn) {
-        // erpDeliveryFeeText(텍스트 입력) 또는 deliveryFee/returnDeliveryFee(숫자) 둘 다 체크
-        const hasDeliveryFee = Number(c.deliveryFee || 0) > 0 || Number(c.returnDeliveryFee || 0) > 0 || !!(c.erpDeliveryFeeText && c.erpDeliveryFeeText.trim());
+        // (v27) 택배비를 모두 숫자로 비교 — "0", "" 등 텍스트 값이 truthy로 잡혀
+        //       0원인데 입금대기로 가던 버그 수정. 0이면 처리대기로.
+        const hasDeliveryFee = Number(c.deliveryFee || 0) > 0
+                            || Number(c.returnDeliveryFee || 0) > 0
+                            || Number(c.erpDeliveryFeeText || 0) > 0;
         if (hasDeliveryFee) {
           // 환불택배비 있으면 입금대기
           buttons.push({
@@ -27227,6 +27230,39 @@
   }
 
   // ==================== 토스트 ====================
+  // (v27) 업로드 실패 모달 — Promise<'retry' | 'cancel'> 반환
+  //       성공한 파일은 NAS에 그대로 있어 재시도 시 다시 올리지 않음 (nasPath 마킹)
+  function showUploadFailDialog(failedFiles, totalCount) {
+    return new Promise((resolve) => {
+      const successCount = totalCount - failedFiles.length;
+      const overlay = document.createElement('div');
+      overlay.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.45);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px;';
+      const fileListHtml = failedFiles.map(f => `<div style="background:#FCEBEB;border-radius:6px;padding:8px 12px;margin-bottom:6px;font-size:12px;color:#791F1F;font-family:monospace;word-break:break-all;">📄 ${escapeHtml(f.autoName || '')}</div>`).join('');
+      const successNote = successCount > 0
+        ? `<div style="font-size:12px;color:#6b7280;margin-bottom:14px;">성공한 ${successCount}개 파일은 NAS에 이미 저장되어 있어, 재시도 시 다시 올리지 않습니다.</div>`
+        : '<div style="font-size:12px;color:#6b7280;margin-bottom:14px;">NAS 일시 장애일 수 있습니다. 잠시 후 [재시도]를 눌러주세요.</div>';
+      overlay.innerHTML = `
+        <div style="background:#fff;border-radius:14px;max-width:520px;width:100%;padding:22px 24px;box-shadow:0 10px 25px rgba(0,0,0,0.15);">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px;">
+            <span style="font-size:22px;">⚠️</span>
+            <div style="font-size:16px;font-weight:700;color:#A32D2D;">파일 업로드 실패 (${failedFiles.length}/${totalCount}개)</div>
+          </div>
+          <div style="font-size:13px;color:#374151;line-height:1.6;margin-bottom:10px;">아래 파일이 NAS에 올라가지 못했습니다.</div>
+          <div style="margin-bottom:8px;max-height:200px;overflow-y:auto;">${fileListHtml}</div>
+          ${successNote}
+          <div style="display:flex;gap:8px;">
+            <button type="button" id="upFailRetryBtn" style="flex:1;background:#1D9E75;color:#fff;border:none;border-radius:8px;padding:11px 14px;font-size:14px;font-weight:700;cursor:pointer;">🔄 실패 파일만 재시도</button>
+            <button type="button" id="upFailCancelBtn" style="background:#fff;color:#374151;border:1px solid #d1d5db;border-radius:8px;padding:11px 16px;font-size:14px;cursor:pointer;">접수 취소</button>
+          </div>
+        </div>
+      `;
+      document.body.appendChild(overlay);
+      const cleanup = (choice) => { try { document.body.removeChild(overlay); } catch(e) {} resolve(choice); };
+      overlay.querySelector('#upFailRetryBtn').addEventListener('click', () => cleanup('retry'));
+      overlay.querySelector('#upFailCancelBtn').addEventListener('click', () => cleanup('cancel'));
+    });
+  }
+
   function showToast(msg, type = '') {
     toastEl.textContent = msg;
     toastEl.className = 'toast show ' + type;
@@ -27765,13 +27801,15 @@
 
       // ==================== NAS 파일 업로드 (5-1) ====================
       // 첨부파일이 있으면 먼저 NAS에 업로드. 결과를 attachments 메타에 반영함.
-      // 업로드 실패해도 Firestore 등록은 진행 (메타에 uploaded:false로 표시).
+      // (v27) 업로드 실패 시 — 시나리오 1 모달로 [실패 파일만 재시도] / [접수 취소] 선택.
+      //       이미 성공한 파일은 nasPath로 마킹되어 재시도 시 다시 업로드되지 않음.
       submitBtn.textContent = '파일 업로드 중...';
-      const uploadResult = await uploadFilesToNAS();
-
-      // 업로드 실패 시 접수 차단 + uploadFailLogs 저장
-      if (!uploadResult.ok) {
+      let uploadResult = await uploadFilesToNAS();
+      while (!uploadResult.ok) {
+        // 성공한 파일은 메모리에 nasPath 반영 (다음 시도 때 건너뜀)
+        try { if (typeof markAttachmentsUploaded === 'function') markAttachmentsUploaded(uploadResult.uploadedFiles); } catch(e) {}
         const failedFiles = uploadResult.uploadedFiles.filter(r => !r.success);
+        // 실패 로그 기록
         try {
           for (const f of failedFiles) {
             await addDoc(collection(db, 'uploadFailLogs'), {
@@ -27783,12 +27821,18 @@
             });
           }
         } catch(e) { console.warn('uploadFailLogs 저장 실패:', e); }
-        // 접수 차단
-        submitBtn.textContent = '접수';
-        submitBtn.disabled = false;
-        formWrap.classList.remove('form-disabled');
-        showToast('파일 업로드에 실패했습니다. 다시 시도해주세요.', 'error');
-        return;
+        // 모달 표시 — 사용자가 [재시도] 또는 [접수 취소] 선택
+        const userChoice = await showUploadFailDialog(failedFiles, uploadResult.uploadedFiles.length);
+        if (userChoice === 'cancel') {
+          // 접수 취소 — 폼 그대로 두고 사용자에게 컨트롤 반환
+          submitBtn.textContent = '접수';
+          submitBtn.disabled = false;
+          formWrap.classList.remove('form-disabled');
+          return;
+        }
+        // 재시도
+        submitBtn.textContent = '재시도 중...';
+        uploadResult = await uploadFilesToNAS();
       }
 
       // 업로드 결과를 자동 파일명 키로 매핑 (Firestore에 저장 시 사용)
@@ -30076,7 +30120,7 @@
   async function tsLoadRangeStats(start, end) {
     const stats = {};
     const ensureUser = (uid) => {
-      if (!stats[uid]) stats[uid] = { workMin: 0, breakMin: 0, toiletMin: 0, awayMin: 0, asCount: 0, npCount: 0, lateCount: 0, days: new Set(), history: [], _firstWorkByDate: {} };
+      if (!stats[uid]) stats[uid] = { workMin: 0, breakMin: 0, toiletMin: 0, awayMin: 0, asCount: 0, erCount: 0, npCount: 0, lateCount: 0, days: new Set(), history: [], _firstWorkByDate: {} };
       return stats[uid];
     };
 
@@ -30208,6 +30252,37 @@
       });
     } catch (e) {
       console.error('팀현황 - AS 처리량 로드 실패:', e);
+    }
+
+    // (v27) 교환·반품 처리량 — 접수 시점(createdAt) 기준, 접수자(engineer) +1
+    //       조장 업무 실적용 카운터 (거절·취소로 빠져도 -1 안 함)
+    try {
+      const startMs = (start instanceof Date ? start : new Date(start)).getTime();
+      const endMs   = (end   instanceof Date ? end   : new Date(end)).getTime();
+      const qER = query(collection(db, 'cases'), where('type', 'in', ['교환', '반품']));
+      const snapER = await getDocs(qER);
+      const usersAll = window._teamStatusState.users || [];
+      const engToUid = {};
+      usersAll.forEach(u => {
+        if (u.id)      engToUid[u.id.toLowerCase()]      = u.id;
+        if (u.loginId) engToUid[u.loginId.toLowerCase()] = u.id;
+      });
+      snapER.forEach(d => {
+        const r = d.data();
+        // AS에서 보상판매·폐기로 type이 '교환'으로 전환된 케이스는 제외 (원래 AS였음)
+        if (r.bosangSale === true || r.discardRequested === true || r.hairDryerExchange === true) return;
+        let ts = null;
+        if (r.createdAt && r.createdAt.toDate) ts = r.createdAt.toDate().getTime();
+        else if (r.createdAt) ts = new Date(r.createdAt).getTime();
+        if (!ts || ts < startMs || ts > endMs) return;
+        const eng = (r.engineer || '').toLowerCase();
+        if (!eng) return;
+        const userId = engToUid[eng] || eng;
+        const s = ensureUser(userId);
+        s.erCount++;
+      });
+    } catch (e) {
+      console.error('팀현황 - 교환·반품 처리량 로드 실패:', e);
     }
 
     // 3) (v15) 새상품 처리량 — cases에서 newProductCompletedBy 기준 카운트
@@ -36319,6 +36394,22 @@
           <div id="tsWeekChips" style="display:none;flex-wrap:wrap;gap:6px;margin-bottom:10px;"></div>
         </div>
 
+        <!-- (v27) 조장 업무 상세 — 직원별 상세 위에 표시 -->
+        <div style="margin-bottom:12px;">
+          <h3 style="margin:0 0 8px;font-size:15px;font-weight:600;">👑 조장 업무 상세 <span style="font-weight:400;color:#6b7280;font-size:12px;">— 가나다순</span></h3>
+          <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
+            <div style="display:grid;grid-template-columns:1.5fr 1fr 0.9fr 1fr 1fr 1fr;padding:10px 14px;background:#EEEDFE;font-size:11px;color:#3C3489;font-weight:600;letter-spacing:0.3px;">
+              <div>직원</div>
+              <div style="text-align:right;">근무시간</div>
+              <div style="text-align:right;">휴식/화장실</div>
+              <div style="text-align:right;">AS 처리량</div>
+              <div style="text-align:right;">교환·반품 처리량</div>
+              <div style="text-align:right;">새상품 처리량</div>
+            </div>
+            <div id="tsLeadStatList"></div>
+          </div>
+        </div>
+
         <!-- 직원별 상세 (상태 + 실적 + 전월대비 통합) -->
         <div style="margin-bottom:12px;">
           <h3 style="margin:0 0 8px;font-size:15px;font-weight:600;">🏆 직원별 상세 <span style="font-weight:400;color:#6b7280;font-size:12px;">— AS 처리량 순 정렬</span></h3>
@@ -36642,7 +36733,18 @@
     let rstats = {};
     try { rstats = await tsLoadRangeStats(dayStart, now); } catch(e){ console.warn('당일 팀원 실적 로드 실패', e); }
     const users = (window._teamStatusState.users || []).filter(u => !team || u.team === team);
-    const staffRows = users.map(u => { const s = tsStatsFor(rstats, u.id) || {}; return { name:(u.name || (window.getDisplayName?window.getDisplayName(u.id):u.id)), work:s.workMin||0, as:s.asCount||0, np:s.npCount||0 }; }).sort((a,b)=>b.as-a.as);
+    // (v27) 조장과 팀원 분리 — 조장: role==='grouplead', 팀원: 그 외
+    // (v27) 조장 판별 — 데이터에 grouplead/teamlead 두 값이 섞여 있어 양쪽 다 인식
+    const isLead = (u) => u.role === 'grouplead' || u.role === 'teamlead';
+    const leadUsers = users.filter(isLead);
+    const memberUsers = users.filter(u => !isLead(u));
+    // (v27) 팀 순 정렬: 주방가전팀 → 생활가전팀 → 로봇·계절가전팀, 같은 팀 안에서 가나다순
+    const TEAM_ORDER = { '주방가전팀': 1, '생활가전팀': 2, '로봇·계절가전팀': 3 };
+    const leadRows = leadUsers.map(u => { const s = tsStatsFor(rstats, u.id) || {}; return { name:(u.name || (window.getDisplayName?window.getDisplayName(u.id):u.id)), team:(u.team||''), work:s.workMin||0, as:s.asCount||0, er:s.erCount||0, np:s.npCount||0 }; }).sort((a,b) => {
+      const ta = TEAM_ORDER[a.team] || 99, tb = TEAM_ORDER[b.team] || 99;
+      return ta !== tb ? ta - tb : a.name.localeCompare(b.name, 'ko');
+    });
+    const staffRows = memberUsers.map(u => { const s = tsStatsFor(rstats, u.id) || {}; return { name:(u.name || (window.getDisplayName?window.getDisplayName(u.id):u.id)), work:s.workMin||0, as:s.asCount||0, np:s.npCount||0 }; }).sort((a,b)=>b.as-a.as);
     const workingN = cat.working.length;
     const asSum = staffRows.reduce((s,r)=>s+r.as,0), npSum = staffRows.reduce((s,r)=>s+r.np,0);
     const perAs = workingN ? (asSum/workingN).toFixed(1) : '0.0';
@@ -36652,6 +36754,10 @@
       const medal = i===0?'🥇 ':i===1?'🥈 ':i===2?'🥉 ':'';
       return `<tr><td style="padding:8px 10px;border-bottom:1px solid #f1f3f5;font-size:13px;font-weight:${i<3?'700':'500'};">${medal}${i+1}. ${escapeHtml(r.name)}</td><td style="padding:8px 10px;border-bottom:1px solid #f1f3f5;font-size:13px;text-align:center;color:#6b7280;">${fmtDur(r.work)}</td><td style="padding:8px 10px;border-bottom:1px solid #f1f3f5;font-size:13px;text-align:center;font-weight:700;color:#1D9E75;">${r.as}건</td><td style="padding:8px 10px;border-bottom:1px solid #f1f3f5;font-size:13px;text-align:center;color:#378ADD;font-weight:600;">${r.np}건</td></tr>`;
     }).join('') : '<tr><td colspan="4" style="padding:18px;text-align:center;color:#9ca3af;font-size:12px;">데이터 없음</td></tr>';
+    // (v27) 조장 테이블 본문 — 순위 없음, 가나다순
+    const leadTbody = leadRows.length ? leadRows.map(r => {
+      return `<tr><td style="padding:8px 10px;border-bottom:1px solid #f1f3f5;font-size:13px;font-weight:600;">${escapeHtml(r.name)}</td><td style="padding:8px 10px;border-bottom:1px solid #f1f3f5;font-size:13px;text-align:center;color:#6b7280;">${fmtDur(r.work)}</td><td style="padding:8px 10px;border-bottom:1px solid #f1f3f5;font-size:13px;text-align:center;font-weight:700;color:#1D9E75;">${r.as}건</td><td style="padding:8px 10px;border-bottom:1px solid #f1f3f5;font-size:13px;text-align:center;font-weight:700;color:#7F77DD;">${r.er}건</td><td style="padding:8px 10px;border-bottom:1px solid #f1f3f5;font-size:13px;text-align:center;color:#378ADD;font-weight:600;">${r.np}건</td></tr>`;
+    }).join('') : '<tr><td colspan="5" style="padding:18px;text-align:center;color:#9ca3af;font-size:12px;">조장 데이터 없음</td></tr>';
 
     const teamPicker = (role === 'grouplead') ? '' : `<div style="display:flex;gap:6px;flex-wrap:wrap;">${(window.AS_TEAMS||[]).map(t=>`<button onclick="window.tsRtSetTeam('${t}')" style="padding:6px 13px;border:1px solid ${team===t?'#1D9E75':'#d1d5db'};background:${team===t?'#1D9E75':'#fff'};color:${team===t?'#fff':'#374151'};border-radius:99px;font-size:12px;cursor:pointer;font-weight:600;">${t}</button>`).join('')}</div>`;
 
@@ -36706,6 +36812,18 @@
         <div style="background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px;"><div style="font-size:12px;color:#6b7280;margin-bottom:4px;">당일 새상품 처리량 / 처리율</div><div style="display:flex;align-items:baseline;gap:8px;"><span style="font-size:24px;font-weight:700;color:#378ADD;">${npDone}<span style="font-size:14px;font-weight:500;color:#111827;">건</span></span><span style="font-size:18px;font-weight:700;color:#378ADD;">${npRate===null?'—':npRate+'%'}</span></div><div style="font-size:11px;color:#9ca3af;margin-top:3px;">처리 ${npDone} ÷ (처리 ${npDone} + 대기 ${npTotal})</div></div>
       </div>
 
+      <div style="font-size:12px;color:#6b7280;margin:16px 0 6px;font-weight:600;">당일 조장 업무 실적 <span style="color:#9ca3af;font-weight:400;">— 조장 ${leadRows.length}명 · 팀 순</span></div>
+      <table style="border-collapse:collapse;width:100%;background:#fff;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
+        <thead><tr>
+          <th style="background:#5F4DC9;color:#fff;font-size:12px;font-weight:600;padding:9px 10px;text-align:left;">직원</th>
+          <th style="background:#5F4DC9;color:#fff;font-size:12px;font-weight:600;padding:9px 10px;text-align:center;">근무시간</th>
+          <th style="background:#5F4DC9;color:#fff;font-size:12px;font-weight:600;padding:9px 10px;text-align:center;">AS 처리량</th>
+          <th style="background:#5F4DC9;color:#fff;font-size:12px;font-weight:600;padding:9px 10px;text-align:center;">교환·반품 처리량</th>
+          <th style="background:#5F4DC9;color:#fff;font-size:12px;font-weight:600;padding:9px 10px;text-align:center;">새상품 처리량</th>
+        </tr></thead>
+        <tbody>${leadTbody}</tbody>
+      </table>
+
       <div style="font-size:12px;color:#6b7280;margin:16px 0 6px;font-weight:600;">당일 팀원 업무 실적 <span style="color:#9ca3af;font-weight:400;">— 근무 ${workingN}명 · AS 총 ${asSum}건 → 인당 평균 ${perAs}건 / 새상품 인당 ${perNp}건</span></div>
       <table style="border-collapse:collapse;width:100%;background:#fff;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
         <thead><tr>
@@ -36750,6 +36868,7 @@
     tsRenderDateLabel();
     tsRenderMetricCards();
     tsRenderStatList();
+    if (typeof tsRenderLeadStatList === 'function') tsRenderLeadStatList();
     tsRenderCumSummary();
     tsRenderTodayKpi();
     tsBindEvents();
@@ -36987,6 +37106,7 @@
       });
       st._monthTrend = trend;
       tsRenderStatList();
+    if (typeof tsRenderLeadStatList === 'function') tsRenderLeadStatList();
     } catch(e){ console.warn('전월 대비 추세 계산 실패', e); }
   }
 
@@ -37057,6 +37177,7 @@
     st.statusFilter = (st.statusFilter === statusKey) ? null : statusKey;
     tsRenderStatusCards();
     tsRenderStatList();
+    if (typeof tsRenderLeadStatList === 'function') tsRenderLeadStatList();
   };
 
   // 현재 팀 + (옵션) 상태 필터에 맞는 직원 목록
@@ -37409,6 +37530,7 @@
         tsRenderDateLabel();
         tsRenderMetricCards();
         tsRenderStatList();
+    if (typeof tsRenderLeadStatList === 'function') tsRenderLeadStatList();
         tsRenderAnomaly();
         // 날짜 선택 후 달력 자동 닫기
         const calWrap = document.getElementById('tsCalendarWrap');
@@ -37421,9 +37543,10 @@
 
   // 통계 대상 직원 필터: 실제 팀 소속 + 관리자 제외 (직원별 상세, metric cards 공통)
   function tsGetStatsTargetUsers() {
+    // (v27) teamlead는 조장 영역 통계에 필요하므로 제외하지 않음 (직원별 상세에서는 별도 필터링)
     return tsGetFilteredUsers(true).filter(u => {
       if (!u.team) return false;
-      if (u.role === 'master' || u.role === 'partlead' || u.role === 'teamlead') return false;
+      if (u.role === 'master' || u.role === 'partlead') return false;
       if (u.team === '해피콜팀') return false;
       return true;
     });
@@ -37470,6 +37593,43 @@
     `;
   }
 
+  // (v27) 조장 업무 상세 — 직원별 상세 위에 표시, 가나다순
+  function tsRenderLeadStatList() {
+    const list = document.getElementById('tsLeadStatList');
+    if (!list) return;
+    const st = window._teamStatusState;
+    // (v27) grouplead/teamlead 둘 다 조장으로 인식
+    const users = tsGetStatsTargetUsers().filter(u => u.role === 'grouplead' || u.role === 'teamlead');
+    const stats = st.rangeStats || {};
+
+    if (users.length === 0) {
+      list.innerHTML = '<div style="padding:24px;text-align:center;color:#9ca3af;font-size:12px;">표시할 조장이 없습니다</div>';
+      return;
+    }
+
+    // (v27) 팀 순 정렬: 주방가전팀 → 생활가전팀 → 로봇·계절가전팀, 같은 팀 안에서 가나다순
+    const TEAM_ORDER = { '주방가전팀': 1, '생활가전팀': 2, '로봇·계절가전팀': 3 };
+    const sorted = users.slice().map(u => {
+      const s = tsStatsFor(stats, u.id) || { workMin: 0, breakMin: 0, toiletMin: 0, asCount: 0, erCount: 0, npCount: 0, lateCount: 0 };
+      return { user: u, stats: s, name: (u.name || (window.getDisplayName ? window.getDisplayName(u.id) : u.id)), team: (u.team || '') };
+    }).sort((a, b) => {
+      const ta = TEAM_ORDER[a.team] || 99, tb = TEAM_ORDER[b.team] || 99;
+      return ta !== tb ? ta - tb : a.name.localeCompare(b.name, 'ko');
+    });
+
+    list.innerHTML = sorted.map(row => {
+      const teamName = row.user.team || '-';
+      return `<div style="display:grid;grid-template-columns:1.5fr 1fr 0.9fr 1fr 1fr 1fr;padding:10px 14px;border-top:1px solid #f1f3f5;font-size:13px;align-items:center;">
+        <div><div style="font-weight:600;">${escapeHtml(row.name)}</div><div style="font-size:11px;color:#9ca3af;">${escapeHtml(teamName)}</div></div>
+        <div style="text-align:right;color:#6b7280;">${tsFmtDuration(row.stats.workMin||0)}</div>
+        <div style="text-align:right;color:#6b7280;font-size:12px;">${tsFmtDuration(row.stats.breakMin||0)} / ${tsFmtDuration(row.stats.toiletMin||0)}</div>
+        <div style="text-align:right;font-weight:700;color:#1D9E75;">${row.stats.asCount||0}건</div>
+        <div style="text-align:right;font-weight:700;color:#7F77DD;">${row.stats.erCount||0}건</div>
+        <div style="text-align:right;font-weight:600;color:#378ADD;">${row.stats.npCount||0}건</div>
+      </div>`;
+    }).join('');
+  }
+
   function tsRenderStatList() {
     const list = document.getElementById('tsStatList');
     if (!list) return;
@@ -37480,9 +37640,9 @@
     const range = tsGetPeriodRange();
     const days = range.days || 1;
 
-    // AS 처리량 순 정렬
-    const sorted = users.slice().map(u => {
-      const s = tsStatsFor(stats, u.id) || { workMin: 0, breakMin: 0, toiletMin: 0, asCount: 0, npCount: 0, lateCount: 0 };
+    // AS 처리량 순 정렬 (v27 — 조장 제외, 조장은 별도 영역에 표시)
+    const sorted = users.slice().filter(u => u.role !== 'grouplead' && u.role !== 'teamlead').map(u => {
+      const s = tsStatsFor(stats, u.id) || { workMin: 0, breakMin: 0, toiletMin: 0, asCount: 0, erCount: 0, npCount: 0, lateCount: 0 };
       return { user: u, stats: s, as: s.asCount };
     }).sort((a, b) => b.as - a.as);
 
@@ -37674,6 +37834,7 @@
         tsRenderDateLabel();
         tsRenderMetricCards();
         tsRenderStatList();
+    if (typeof tsRenderLeadStatList === 'function') tsRenderLeadStatList();
         tsRenderAnomaly();
         tsRenderTodayKpi();
         const calWrap = document.getElementById('tsCalendarWrap');
@@ -37730,6 +37891,7 @@
       tsRenderDateLabel();
       tsRenderMetricCards();
       tsRenderStatList();
+    if (typeof tsRenderLeadStatList === 'function') tsRenderLeadStatList();
       tsRenderTodayKpi();
     };
 
