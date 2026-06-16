@@ -5006,7 +5006,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v29';
+  const APP_VERSION = 'v30';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -23115,6 +23115,21 @@
     showToast('엑셀 생성 중...', 'info');
     try {
       const st = window._completedListState || {};
+      // (v27) 다운로드 직전 화면 입력값 동기화 — 검색창에 타이핑만 하고 검색 안 눌렀어도 그 값 반영
+      try {
+        const searchEl = document.getElementById('completedSearchInput');
+        const typeEl = document.getElementById('completedTypeFilter');
+        const periodEl = document.getElementById('completedPeriodFilter');
+        if (searchEl) st.searchKw = searchEl.value;
+        if (typeEl) st.typeFilter = typeEl.value;
+        if (periodEl) st.periodFilter = periodEl.value;
+        if (periodEl && periodEl.value === 'custom') {
+          const sEl = document.getElementById('completedCustomStart');
+          const eEl = document.getElementById('completedCustomEnd');
+          if (sEl) st.customStart = sEl.value;
+          if (eEl) st.customEnd = eEl.value;
+        }
+      } catch(e){}
       // 현재 화면에 보이는 필터링된 데이터를 그대로 사용
       const now = new Date();
       const thisMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
@@ -23170,17 +23185,19 @@
           return true;
         });
       }
-      // 검색어
-      if (st.searchKeyword && st.searchKeyword.trim()) {
-        const kw = st.searchKeyword.trim().toLowerCase();
+      // 검색 — 화면 필터와 동일 로직 (st.searchKw + 전화번호 하이픈 제거 + 제품명 포함)
+      if (st.searchKw) {
+        const kw = st.searchKw.toLowerCase();
+        const kwDigits = kw.replace(/[^0-9]/g, '');
         cases = cases.filter(c => {
-          const fields = [
-            (c.customer && c.customer.name) || '',
-            (c.customer && c.customer.phone) || '',
-            (c.product && c.product.serial) || c.serial || '',
-            c.id || ''
-          ];
-          return fields.some(f => String(f).toLowerCase().includes(kw));
+          const name = String(c.customer && c.customer.name || '').toLowerCase();
+          const phone = String(c.customer && c.customer.phone || '').toLowerCase();
+          const phoneDigits = phone.replace(/[^0-9]/g, '');
+          const serial = String(c.product && c.product.serial || '').toLowerCase();
+          const product = String(c.product && c.product.name || '').toLowerCase();
+          const id = String(c.id || '').toLowerCase();
+          const phoneMatch = phone.includes(kw) || (kwDigits && phoneDigits.includes(kwDigits));
+          return name.includes(kw) || phoneMatch || serial.includes(kw) || product.includes(kw) || id.includes(kw);
         });
       }
 
