@@ -5006,7 +5006,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v30';
+  const APP_VERSION = 'v31';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -23140,8 +23140,10 @@
       const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
 
       const getDate = (c) => {
+        // (v27) 화면 필터와 동일 — 완료일 기준 (erpPartsUploadedAt 우선)
         try {
-          if (c.intakeDate) return new Date(c.intakeDate);
+          if (c.erpPartsUploadedAt && c.erpPartsUploadedAt.toDate) return c.erpPartsUploadedAt.toDate();
+          if (c.erpProcessedAt && c.erpProcessedAt.toDate) return c.erpProcessedAt.toDate();
           if (c.createdAt && c.createdAt.toDate) return c.createdAt.toDate();
           if (c.createdAt) return new Date(c.createdAt);
         } catch(e) {}
@@ -23227,7 +23229,7 @@
         const d = getDate(c);
         const dateStr = d ? `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}` : '';
         return {
-          '입고일': dateStr,
+          '완료일': dateStr,
           'AS ID': c.id || '',
           '카테고리': shortCat((c.product && c.product.category) || ''),
           '담당엔지니어': (window.getDisplayName ? window.getDisplayName(c.engineer) : c.engineer) || '',
