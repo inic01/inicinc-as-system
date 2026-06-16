@@ -3815,6 +3815,10 @@
             <span class="admin-menu-icon">📜</span>
             <span>변경 이력</span>
           </div>
+          <div class="admin-menu-item" data-admin="uploadFailLog" onclick="adminShowSection('uploadFailLog')">
+            <span class="admin-menu-icon">⚠️</span>
+            <span>NAS 업로드 실패 로그 <span id="uploadFailBadge" style="display:none;background:#FCEBEB;color:#791F1F;font-size:10px;padding:1px 6px;border-radius:9px;font-weight:700;margin-left:4px;">0</span></span>
+          </div>
           <div class="admin-menu-item" data-admin="erpFix" onclick="adminShowSection('erpFix')" style="background:#fef2f2;">
             <span class="admin-menu-icon">🔧</span>
             <span style="color:#dc2626;font-weight:700">ERP 누락 복구</span>
@@ -5002,29 +5006,43 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v27';
+  const APP_VERSION = 'v28';
+  // 디버깅용으로 전역에 노출
+  window.APP_VERSION = APP_VERSION;
 
   // 버전 체크 — 페이지 로드 후 + 주기적으로 (5분마다) Firestore 최신 버전 확인
   async function checkAppVersion() {
     try {
-      const verDoc = await getDoc(doc(db, 'config', 'appVersion'));
-      if (!verDoc.exists()) return;
-      const latestVer = verDoc.data().version;
+      console.log('[버전 체크] 시작, APP_VERSION:', APP_VERSION);
+      if (typeof db === 'undefined' || !db) { console.warn('[버전 체크] db 미준비'); return; }
+      console.log('[버전 체크] db 존재 확인 OK');
+      const ref = doc(db, 'config', 'appVersion');
+      console.log('[버전 체크] doc 참조 생성 OK');
+      const verDoc = await getDoc(ref);
+      console.log('[버전 체크] getDoc 완료, exists:', verDoc.exists());
+      if (!verDoc.exists()) { console.warn('[버전 체크] config/appVersion 문서 없음'); return; }
+      const data = verDoc.data();
+      console.log('[버전 체크] 받은 data:', JSON.stringify(data));
+      console.log('[버전 체크] data 키:', Object.keys(data));
+      const latestVer = data.version;
+      console.log('[버전 체크] 현재:', APP_VERSION, '/ 최신:', latestVer);
       if (latestVer && latestVer !== APP_VERSION) {
         const banner = document.getElementById('versionBanner');
         const msg = document.getElementById('versionBannerMessage');
         if (banner && msg) {
           msg.textContent = `⚠️ 새 버전(${latestVer})이 배포되었습니다. 현재 버전(${APP_VERSION}) — 새로고침해주세요.`;
           banner.style.display = 'block';
+          console.log('[버전 체크] 배너 표시!');
         }
+      } else {
+        console.log('[버전 체크] 버전 일치 — 배너 표시 안 함');
       }
-    } catch(e) { console.warn('버전 확인 실패:', e); }
+    } catch(e) { console.error('[버전 체크] 실패:', e); }
   }
-  // 로그인 완료 후 + 5분마다 체크
-  window.addEventListener('load', () => {
-    setTimeout(checkAppVersion, 3000);  // 3초 후 첫 체크
-    setInterval(checkAppVersion, 5 * 60 * 1000);  // 5분마다
-  });
+  window.checkAppVersion = checkAppVersion;
+  // 5초 후 첫 체크 (Firebase 초기화 시간 확보) + 5분마다 반복
+  setTimeout(checkAppVersion, 5000);
+  setInterval(checkAppVersion, 5 * 60 * 1000);
 
   // (v20) 로그인 화면 흰색 테마는 <body class="login-mode">로 미리 적용됨 (깜빡임 방지)
   // 진입(enterApp) 시 제거됨
@@ -7147,6 +7165,22 @@
       adminRenderAudit();
       return;
     }
+    if (section === 'uploadFailLog') {
+      // (v27) NAS 업로드 실패 로그 — 마스터만
+      if (!window.canDo('write', 'historyView')) {
+        const content = document.getElementById('adminContent');
+        content.innerHTML = `
+          <div class="admin-placeholder">
+            <div class="admin-placeholder-icon">🔒</div>
+            <h4>업로드 실패 로그 조회 권한이 없습니다</h4>
+            <p>이 화면은 마스터만 접근할 수 있습니다.</p>
+          </div>
+        `;
+        return;
+      }
+      adminRenderUploadFailLog();
+      return;
+    }
 
     // 그 외: placeholder (3~4차 작업에서 채움)
     const content = document.getElementById('adminContent');
@@ -9175,6 +9209,123 @@
   window.adminAuditRefresh = async function() {
     await adminAuditLoadFirstPage();
   };
+
+  // (v27) NAS 업로드 실패 로그 화면
+  //   - uploadFailLogs 컬렉션에서 가져옴
+  //   - 미확인 건수 배지 표시 (resolved !== true 인 것)
+  //   - [확인 완료] 버튼 누르면 resolved: true 처리
+  window.adminRenderUploadFailLog = async function() {
+    const content = document.getElementById('adminContent');
+    if (!content) return;
+    content.innerHTML = `
+      <div style="padding:20px;">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
+          <div>
+            <h2 style="margin:0;font-size:20px;font-weight:600;">⚠️ NAS 업로드 실패 로그</h2>
+            <div style="font-size:12px;color:#9ca3af;margin-top:2px;">접수 시 NAS 업로드가 실패한 파일 기록 (직원 재첨부 처리 후 확인 완료 누르세요)</div>
+          </div>
+          <button type="button" onclick="window.adminRenderUploadFailLog()" style="padding:9px 16px;background:#fff;border:1px solid #d1d5db;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">🔄 새로고침</button>
+        </div>
+        <div id="uploadFailLogTable">
+          <div style="padding:40px;text-align:center;color:#9ca3af;font-size:13px;">로드 중...</div>
+        </div>
+      </div>
+    `;
+    try {
+      const snap = await getDocs(collection(db, 'uploadFailLogs'));
+      const items = [];
+      snap.forEach(d => items.push({ id: d.id, ...d.data() }));
+      // 최신순
+      items.sort((a, b) => {
+        const ta = a.createdAt && a.createdAt.toDate ? a.createdAt.toDate().getTime() : 0;
+        const tb = b.createdAt && b.createdAt.toDate ? b.createdAt.toDate().getTime() : 0;
+        return tb - ta;
+      });
+      const unresolved = items.filter(r => r.resolved !== true).length;
+      // 배지 갱신
+      const badge = document.getElementById('uploadFailBadge');
+      if (badge) {
+        if (unresolved > 0) { badge.style.display = 'inline'; badge.textContent = unresolved; }
+        else { badge.style.display = 'none'; }
+      }
+      const tableEl = document.getElementById('uploadFailLogTable');
+      if (!tableEl) return;
+      if (items.length === 0) {
+        tableEl.innerHTML = '<div style="padding:40px;text-align:center;color:#9ca3af;font-size:13px;">업로드 실패 기록이 없습니다 ✅</div>';
+        return;
+      }
+      const rowsHtml = items.map(r => {
+        const t = r.createdAt && r.createdAt.toDate ? r.createdAt.toDate() : null;
+        const tStr = t ? `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,'0')}-${String(t.getDate()).padStart(2,'0')} ${String(t.getHours()).padStart(2,'0')}:${String(t.getMinutes()).padStart(2,'0')}` : '';
+        const uploaderName = window.getDisplayName ? window.getDisplayName(r.uploader) : (r.uploader || '');
+        const isResolved = r.resolved === true;
+        const statusBadge = isResolved
+          ? '<span style="background:#EAF3DE;color:#27500A;font-size:11px;padding:3px 10px;border-radius:9px;font-weight:600;">확인 완료</span>'
+          : '<span style="background:#FAEEDA;color:#854F0B;font-size:11px;padding:3px 10px;border-radius:9px;font-weight:600;">미확인</span>';
+        const actionBtn = isResolved
+          ? '<button type="button" onclick="window.adminUploadFailUnresolve(\'' + r.id + '\')" style="padding:5px 10px;background:#fff;border:1px solid #d1d5db;color:#6b7280;border-radius:6px;font-size:11px;cursor:pointer;">미확인으로</button>'
+          : '<button type="button" onclick="window.adminUploadFailResolve(\'' + r.id + '\')" style="padding:5px 10px;background:#1D9E75;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;">✅ 확인 완료</button>';
+        return `<tr style="border-top:1px solid #f1f3f5;">
+          <td style="padding:9px 10px;color:#6b7280;font-size:12px;white-space:nowrap;">${tStr}</td>
+          <td style="padding:9px 10px;font-family:monospace;font-size:12px;">${escapeHtml(r.caseId || '-')}</td>
+          <td style="padding:9px 10px;font-size:12px;word-break:break-all;">${escapeHtml(r.fileName || '-')}</td>
+          <td style="padding:9px 10px;font-size:13px;">${escapeHtml(uploaderName)}</td>
+          <td style="padding:9px 10px;text-align:center;">${statusBadge}</td>
+          <td style="padding:9px 10px;text-align:right;">${actionBtn}</td>
+        </tr>`;
+      }).join('');
+      tableEl.innerHTML = `
+        <table style="width:100%;border-collapse:collapse;background:#fff;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
+          <thead><tr>
+            <th style="background:#f8fafc;padding:9px 10px;text-align:left;font-size:11px;font-weight:600;color:#6b7280;border-bottom:1px solid #e5e7eb;">시각</th>
+            <th style="background:#f8fafc;padding:9px 10px;text-align:left;font-size:11px;font-weight:600;color:#6b7280;border-bottom:1px solid #e5e7eb;">케이스</th>
+            <th style="background:#f8fafc;padding:9px 10px;text-align:left;font-size:11px;font-weight:600;color:#6b7280;border-bottom:1px solid #e5e7eb;">파일명</th>
+            <th style="background:#f8fafc;padding:9px 10px;text-align:left;font-size:11px;font-weight:600;color:#6b7280;border-bottom:1px solid #e5e7eb;">업로더</th>
+            <th style="background:#f8fafc;padding:9px 10px;text-align:center;font-size:11px;font-weight:600;color:#6b7280;border-bottom:1px solid #e5e7eb;">상태</th>
+            <th style="background:#f8fafc;padding:9px 10px;text-align:right;font-size:11px;font-weight:600;color:#6b7280;border-bottom:1px solid #e5e7eb;">작업</th>
+          </tr></thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+      `;
+    } catch(e) {
+      console.error('업로드 실패 로그 로드 실패:', e);
+      const tableEl = document.getElementById('uploadFailLogTable');
+      if (tableEl) tableEl.innerHTML = '<div style="padding:40px;text-align:center;color:#A32D2D;font-size:13px;">로드 실패: ' + escapeHtml(e.message || e) + '</div>';
+    }
+  };
+
+  // 확인 완료 처리
+  window.adminUploadFailResolve = async function(id) {
+    try {
+      await updateDoc(doc(db, 'uploadFailLogs', id), { resolved: true, resolvedAt: serverTimestamp(), resolvedBy: window._currentUserId || '' });
+      showToast('확인 완료 처리됨', 'success');
+      window.adminRenderUploadFailLog();
+    } catch(e) { showToast('처리 실패: ' + (e.message || e), 'error'); }
+  };
+  // 미확인으로 되돌리기
+  window.adminUploadFailUnresolve = async function(id) {
+    try {
+      await updateDoc(doc(db, 'uploadFailLogs', id), { resolved: false });
+      showToast('미확인으로 되돌림', 'info');
+      window.adminRenderUploadFailLog();
+    } catch(e) { showToast('처리 실패: ' + (e.message || e), 'error'); }
+  };
+
+  // (v27) 미확인 카운트 배지 — 페이지 로드 후 + 5분마다 갱신
+  async function uploadFailRefreshBadge() {
+    try {
+      if (typeof db === 'undefined' || !db) return;
+      const badge = document.getElementById('uploadFailBadge');
+      if (!badge) return;
+      const snap = await getDocs(collection(db, 'uploadFailLogs'));
+      let count = 0;
+      snap.forEach(d => { if (d.data().resolved !== true) count++; });
+      if (count > 0) { badge.style.display = 'inline'; badge.textContent = count; }
+      else { badge.style.display = 'none'; }
+    } catch(e) { /* 조용히 무시 */ }
+  }
+  setTimeout(uploadFailRefreshBadge, 7000);
+  setInterval(uploadFailRefreshBadge, 5 * 60 * 1000);
 
   // 필터 적용 + 테이블 렌더
   window.adminRenderAuditTable = function() {
@@ -22927,6 +23078,14 @@
     }
   };
 
+  // (v27) 사용자 지정 기간 — 달력 표시/숨김 토글
+  window.completedTogglePeriodCustom = function() {
+    const sel = document.getElementById('completedPeriodFilter');
+    const wrap = document.getElementById('completedCustomDateWrap');
+    if (!sel || !wrap) return;
+    wrap.style.display = sel.value === 'custom' ? 'inline-flex' : 'none';
+  };
+
   // (v27) 완료 접수내역 엑셀 다운로드 — 2개 시트
   //   시트 1: 케이스 단위 — 입고일/ID/카테고리/엔지니어/제품/성함/핸드폰/유상무상/ERP/사용부품업로드
   //   시트 2: 부품 단위 — 성함/핸드폰/사용부품 (부품 1개당 1행)
@@ -22972,6 +23131,12 @@
       }
       // 기간 필터
       if (st.periodFilter && st.periodFilter !== 'all') {
+        // (v27) custom 기간 — st.customStart / st.customEnd 사용
+        let customStart = null, customEnd = null;
+        if (st.periodFilter === 'custom') {
+          if (st.customStart) customStart = new Date(st.customStart + 'T00:00:00');
+          if (st.customEnd) customEnd = new Date(st.customEnd + 'T23:59:59');
+        }
         cases = cases.filter(c => {
           const d = getDate(c);
           if (!d) return false;
@@ -22979,6 +23144,11 @@
           if (st.periodFilter === 'thismonth') return d >= thisMonthStart;
           if (st.periodFilter === 'lastmonth') return d >= lastMonthStart && d <= lastMonthEnd;
           if (st.periodFilter === '3months') return d >= threeMonthsAgo;
+          if (st.periodFilter === 'custom') {
+            if (customStart && d < customStart) return false;
+            if (customEnd && d > customEnd) return false;
+            return true;
+          }
           return true;
         });
       }
@@ -23205,6 +23375,12 @@
       const lastMonthEnd = new Date(now.getFullYear(), now.getMonth(), 0, 23, 59, 59);
       const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
       const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+      // (v27) custom — 달력 두 개 값으로 범위 잡기
+      let customStart = null, customEnd = null;
+      if (st.periodFilter === 'custom') {
+        if (st.customStart) customStart = new Date(st.customStart + 'T00:00:00');
+        if (st.customEnd) customEnd = new Date(st.customEnd + 'T23:59:59');
+      }
       filtered = filtered.filter(c => {
         const d = getDate(c);
         if (!d) return false;
@@ -23212,6 +23388,11 @@
         if (st.periodFilter === 'thismonth') return d >= thisMonthStart;
         if (st.periodFilter === 'lastmonth') return d >= lastMonthStart && d <= lastMonthEnd;
         if (st.periodFilter === '3months') return d >= threeMonthsAgo;
+        if (st.periodFilter === 'custom') {
+          if (customStart && d < customStart) return false;
+          if (customEnd && d > customEnd) return false;
+          return true;
+        }
         return true;
       });
     }
@@ -23293,13 +23474,19 @@
             <option value="교환" ${st.typeFilter === '교환' ? 'selected' : ''}>교환</option>
             <option value="반품" ${st.typeFilter === '반품' ? 'selected' : ''}>반품</option>
           </select>
-          <select id="completedPeriodFilter" style="padding:9px 12px;border:1px solid #d1d5db;border-radius:8px;font-size:13px;background:#fff;cursor:pointer;">
+          <select id="completedPeriodFilter" onchange="window.completedTogglePeriodCustom()" style="padding:9px 12px;border:1px solid #d1d5db;border-radius:8px;font-size:13px;background:#fff;cursor:pointer;">
             <option value="today" ${st.periodFilter === 'today' ? 'selected' : ''}>당일</option>
             <option value="thismonth" ${st.periodFilter === 'thismonth' ? 'selected' : ''}>이번 달</option>
             <option value="lastmonth" ${st.periodFilter === 'lastmonth' ? 'selected' : ''}>지난 달</option>
             <option value="3months" ${st.periodFilter === '3months' ? 'selected' : ''}>3개월</option>
+            <option value="custom" ${st.periodFilter === 'custom' ? 'selected' : ''}>📅 사용자 지정</option>
             <option value="all" ${st.periodFilter === 'all' ? 'selected' : ''}>전체</option>
           </select>
+          <span id="completedCustomDateWrap" style="display:${st.periodFilter === 'custom' ? 'inline-flex' : 'none'};gap:6px;align-items:center;">
+            <input type="date" id="completedCustomStart" value="${st.customStart || ''}" style="padding:9px 10px;border:1px solid #d1d5db;border-radius:8px;font-size:13px;">
+            <span style="color:#6b7280;font-size:13px;">~</span>
+            <input type="date" id="completedCustomEnd" value="${st.customEnd || ''}" style="padding:9px 10px;border:1px solid #d1d5db;border-radius:8px;font-size:13px;">
+          </span>
           <button type="button" id="completedSearchBtn" style="padding:9px 20px;background:#2563eb;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;">🔍 검색 / 새로고침</button>
         </div>
 
@@ -23392,6 +23579,13 @@
       if (searchEl) window._completedListState.searchKw = searchEl.value;
       if (typeEl) window._completedListState.typeFilter = typeEl.value;
       if (periodEl) window._completedListState.periodFilter = periodEl.value;
+      // (v27) custom 기간 — 달력 두 개 값 읽기
+      if (periodEl && periodEl.value === 'custom') {
+        const sEl = document.getElementById('completedCustomStart');
+        const eEl = document.getElementById('completedCustomEnd');
+        if (sEl) window._completedListState.customStart = sEl.value;
+        if (eEl) window._completedListState.customEnd = eEl.value;
+      }
       window._completedListState.page = 1;
       window._completedListState.loaded = false; // 강제 재로드
       window._completedListState.loadError = null;
@@ -30371,13 +30565,19 @@
     //       조회 기간이 현재 시각을 포함하면(당일 실적 등) 지금 진행 중인 상태의
     //       경과 시간을 더한다. (근무중 명단 지속시간과 당일 실적 근무시간이
     //       서로 다르게 보이던 문제 — 진행 중 근무 시간이 실적에 빠져 있었음)
+    // (v27) currentStatuses에는 같은 직원이 대소문자 두 키로 등록돼 있어 중복 합산 위험 →
+    //       소문자 기준으로 dedupe, history의 userId(소문자)와 일치하는 키만 사용
     try {
       const nowMs = Date.now();
       const _stMs = (start instanceof Date ? start : new Date(start)).getTime();
       const _enMs = (end instanceof Date ? end : new Date(end)).getTime();
       if (nowMs >= _stMs && nowMs <= _enMs) {
         const liveMap = (window._teamStatusState && window._teamStatusState.currentStatuses) || {};
+        const seen = new Set();
         Object.keys(liveMap).forEach(uid => {
+          const uidLower = String(uid).toLowerCase();
+          if (seen.has(uidLower)) return;
+          seen.add(uidLower);
           const cs = liveMap[uid];
           if (!cs || !cs.status) return;
           const mapped = tsMapStatus(cs.status);
@@ -30390,7 +30590,10 @@
           const fromMs = Math.max(segMs, _stMs);
           const dur = Math.floor((nowMs - fromMs) / 60000);
           if (dur <= 0) return;
-          const s = ensureUser(uid);
+          // (v27) stats 키 통일 — 기존 history로 만들어진 stats 키와 같은 식 사용
+          //       lookup 헬퍼 활용해 이미 있는 키로 찾고, 없으면 소문자 키로 새로 생성
+          let s = tsStatsFor(stats, uid);
+          if (!s) { s = ensureUser(uidLower); }
           if (mapped === 'working') s.workMin += dur;
           else if (mapped === 'break') s.breakMin += dur;
           else if (mapped === 'toilet') s.toiletMin += dur;
@@ -36871,6 +37074,26 @@
     return total;
   }
 
+  // (v27) 제품 기준 + 접수 시점 — 카드의 당일 처리량
+  //       그 팀 제품의 케이스를 누가 접수했든(다른 팀 지원 포함) 모두 카운트
+  function tsCountProductIntake(team, dateKey) {
+    const cases = window.dashAllCases || [];
+    let count = 0;
+    cases.forEach(c => {
+      if (!c || c.type !== 'AS') return;
+      if (c.bosangSale === true || c.discardRequested === true) return;
+      const productTeam = window.inventoryGetTeamForCategory(c.product && c.product.category);
+      if (productTeam !== team) return;
+      try {
+        const dt = c.createdAt && c.createdAt.toDate ? c.createdAt.toDate() : new Date(c.createdAt);
+        const k = `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+        if (k !== dateKey) return;
+      } catch(e) { return; }
+      count++;
+    });
+    return count;
+  }
+
   // (v27) 다른 팀이 우리 팀 제품을 지원해준 건수 — 카드의 (지원 N건)
   //       오늘 접수된 AS 케이스 중, 제품은 우리 팀 / 접수자는 다른 팀 인 케이스 수
   function tsCountSupportIn(team, dateKey) {
@@ -36955,9 +37178,12 @@
     const role = window._currentUserRole;
 
     // 1) 팀원 근무 — 팀 등록 직원 전체 기준(상태 없으면 연차/퇴근) + 한글 이름
+    //    (v27) active !== false 필터 — 비활성화한 직원 제외
     const cat = { working:[], away:[], break:[], toilet:[], off:[] };
     const statuses = window._teamStatusState.currentStatuses || {};
-    const rtUsers = (window._teamStatusState.users || []).filter(u => !team || u.team === team);
+    const rtUsers = (window._teamStatusState.users || [])
+      .filter(u => u.active !== false)
+      .filter(u => !team || u.team === team);
     const rtName = (u) => u.name || (window.getDisplayName ? window.getDisplayName(u.id) : u.id);
     rtUsers.forEach(u => {
       const cs = tsGetUserStatus(u.id);  // (v25) 대소문자 무시 매칭
@@ -36981,13 +37207,15 @@
     const npTotal = npProducts.reduce((s,p)=>s+p.pending,0);
     const detRows = (arr)=> arr.length ? arr.map(p=>`<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid #f4eecf;"><span>${escapeHtml(p.product)}</span><b>${p.pending}건</b></div>`).join('') : '<div style="color:#9ca3af;padding:4px 0;">없음</div>';
 
-    // (v27) 당일 실적 — 카드는 제품 기준 (asLiveDaily의 done), 팀원 표는 직원 기준
-    //       두 숫자가 다른 게 정상 — 차이가 곧 다른 팀 지원분
+    // (v27) 당일 실적 — 카드는 제품 기준 + 접수 시점
+    //       그 팀 제품을 누가 접수했든 모두 합산 (다른 팀 지원 포함)
+    //       팀원 표는 직원 기준 + 접수 시점 (아래에서 별도 계산)
     const intake = ld.totals.intake, prev = ld.totals.prevPending;
-    const done = ld.totals.done;  // 제품 기준 처리량 (그 팀 제품을 누가 처리했든)
+    let done = 0;
+    try { done = tsCountProductIntake(team, todayKey); } catch(e){}
     // (v27) 다른 팀 지원분 — 이 팀 제품을 다른 팀 직원이 처리한 케이스 수
-    let supportIn = 0;  // 우리 팀이 다른 팀에서 받은 지원
-    try { supportIn = await tsCountSupportIn(team, todayKey); } catch(e){}
+    let supportIn = 0;
+    try { supportIn = tsCountSupportIn(team, todayKey); } catch(e){}
     // 처리율 — 실시간 업무현황 식: 처리량 ÷ (전일 미처리 + 금일 입고) × 100, 100% cap
     const denominator = prev + intake;
     const asRate = denominator > 0 ? Math.min(100, Math.round(done / denominator * 100)) : null;
@@ -37000,7 +37228,11 @@
     const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     let rstats = {};
     try { rstats = await tsLoadRangeStats(dayStart, now); } catch(e){ console.warn('당일 팀원 실적 로드 실패', e); }
-    const users = (window._teamStatusState.users || []).filter(u => !team || u.team === team);
+    // (v27) 비활성화 직원 제외 + 해피콜팀 제외
+    const users = (window._teamStatusState.users || [])
+      .filter(u => u.active !== false)
+      .filter(u => (u.team || '') !== '해피콜팀')
+      .filter(u => !team || u.team === team);
     // (v27) 조장과 팀원 분리 — 조장: role==='grouplead', 팀원: 그 외
     // (v27) 조장 판별 — 데이터에 grouplead/teamlead 두 값이 섞여 있어 양쪽 다 인식
     const isLead = (u) => u.role === 'grouplead' || u.role === 'teamlead';
