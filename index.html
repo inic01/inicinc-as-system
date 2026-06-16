@@ -5006,7 +5006,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v28';
+  const APP_VERSION = 'v29';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -5040,9 +5040,27 @@
     } catch(e) { console.error('[버전 체크] 실패:', e); }
   }
   window.checkAppVersion = checkAppVersion;
-  // 5초 후 첫 체크 (Firebase 초기화 시간 확보) + 5분마다 반복
-  setTimeout(checkAppVersion, 5000);
-  setInterval(checkAppVersion, 5 * 60 * 1000);
+  // (v28) 폴링 → onSnapshot 실시간 구독으로 변경
+  //       Firebase 콘솔에서 version 값 바꾸는 순간 모든 사용자 화면에 1~2초 안에 배너 즉시 등장
+  //       (페이지 로드 직후 db 초기화 시간 확보 위해 3초 후에 구독 시작)
+  setTimeout(() => {
+    try {
+      if (typeof db === 'undefined' || !db) { console.warn('버전 체크: db 미준비 (구독 실패)'); return; }
+      onSnapshot(doc(db, 'config', 'appVersion'), (snap) => {
+        if (!snap.exists()) return;
+        const latestVer = snap.data().version;
+        console.log('[버전 체크 실시간] 현재:', APP_VERSION, '/ 최신:', latestVer);
+        if (latestVer && latestVer !== APP_VERSION) {
+          const banner = document.getElementById('versionBanner');
+          const msg = document.getElementById('versionBannerMessage');
+          if (banner && msg) {
+            msg.textContent = `⚠️ 새 버전(${latestVer})이 배포되었습니다. 현재 버전(${APP_VERSION}) — 새로고침해주세요.`;
+            banner.style.display = 'block';
+          }
+        }
+      }, (err) => { console.warn('버전 구독 실패:', err); });
+    } catch(e) { console.warn('버전 구독 시작 실패:', e); }
+  }, 3000);
 
   // (v20) 로그인 화면 흰색 테마는 <body class="login-mode">로 미리 적용됨 (깜빡임 방지)
   // 진입(enterApp) 시 제거됨
@@ -23429,6 +23447,19 @@
     const pageEnd = pageStart + pageSize;
     const pagedFiltered = filtered.slice(pageStart, pageEnd);
 
+    // (v27) 통계 카드 — 필터 결과(filtered) 기준으로 재계산
+    //       필터 적용 시 카드도 같이 변동 (전체 → 필터 결과 / 이번 달 → 필터된 케이스 중 이번 달 등)
+    const totalCountF = filtered.length;
+    const thisMonthCountF = filtered.filter(c => {
+      const d = getDate(c);
+      return d && d >= thisMonthStart;
+    }).length;
+    const oldCountF = filtered.filter(c => {
+      const d = getDate(c);
+      return d && d < threeMonthsAgo;
+    }).length;
+    const exchReturnCountF = filtered.filter(c => c.type === '교환' || c.type === '반품').length;
+
     c.innerHTML = `
       <div style="max-width:1280px;margin:0 auto;padding:16px;">
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px;">
@@ -23444,24 +23475,25 @@
           ` : ''}
         </div>
 
-        <!-- 통계 카드 -->
+        <!-- 통계 카드 (v27: 필터 적용 결과 기준) -->
         <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:14px;">
           <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:12px 16px;">
-            <div style="font-size:11px;color:#6b7280;margin-bottom:4px;">전체 완료</div>
-            <div style="font-size:22px;font-weight:700;color:#111827;">${totalCount}</div>
+            <div style="font-size:11px;color:#6b7280;margin-bottom:4px;">필터 결과</div>
+            <div style="font-size:22px;font-weight:700;color:#111827;">${totalCountF}</div>
+            <div style="font-size:10px;color:#9ca3af;margin-top:2px;">전체 ${allCompleted.length}건 중</div>
           </div>
           <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:12px 16px;">
             <div style="font-size:11px;color:#6b7280;margin-bottom:4px;">이번 달</div>
-            <div style="font-size:22px;font-weight:700;color:#1e40af;">${thisMonthCount}</div>
+            <div style="font-size:22px;font-weight:700;color:#1e40af;">${thisMonthCountF}</div>
           </div>
           <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:12px 16px;">
             <div style="font-size:11px;color:#6b7280;margin-bottom:4px;">3개월 이상</div>
-            <div style="font-size:22px;font-weight:700;color:${oldCount > 0 ? '#dc2626' : '#6b7280'};">${oldCount}</div>
-            ${oldCount > 0 ? '<div style="font-size:10px;color:#9ca3af;margin-top:2px;">정리 대상</div>' : ''}
+            <div style="font-size:22px;font-weight:700;color:${oldCountF > 0 ? '#dc2626' : '#6b7280'};">${oldCountF}</div>
+            ${oldCountF > 0 ? '<div style="font-size:10px;color:#9ca3af;margin-top:2px;">정리 대상</div>' : ''}
           </div>
           <div style="background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:12px 16px;">
             <div style="font-size:11px;color:#6b7280;margin-bottom:4px;">교환·반품</div>
-            <div style="font-size:22px;font-weight:700;color:#7c2d12;">${exchReturnCount}</div>
+            <div style="font-size:22px;font-weight:700;color:#7c2d12;">${exchReturnCountF}</div>
           </div>
         </div>
 
