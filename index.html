@@ -5014,7 +5014,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v34';
+  const APP_VERSION = 'v35';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -5039,6 +5039,9 @@
 
   // (step37) 버전별 수정사항 — 모달에 표시. 최신 배포 항목을 맨 위에 추가하면 됩니다.
   const VERSION_CHANGELOG = {
+    'v35': [
+      '일부 접수건이 상태 변경 시 사라지던 문제 수정'
+    ],
     'v34': [
       '안심번호(050 계열) 핸드폰 입력 지원'
     ],
@@ -7438,6 +7441,20 @@
         </span>
       </div>
 
+      <!-- (케이스 점검) 사라진/위험 케이스 찾기 -->
+      <div style="margin:8px 0 12px;padding:12px;border:1px solid #c7d2fe;border-radius:9px;background:#eef2ff;">
+        <div style="font-size:13px;font-weight:800;color:#3730a3;margin-bottom:8px;">🔎 케이스 점검 도구</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+          <input id="caseAuditKeyword" placeholder="고객 성함 또는 전화번호" style="padding:8px 10px;border:1px solid #c7d2fe;border-radius:7px;font-size:13px;min-width:200px;">
+          <button type="button" class="admin-btn" onclick="adminAuditFindCase()" style="background:#4f46e5;color:#fff;font-weight:700;">고객 케이스 찾기</button>
+          <button type="button" class="admin-btn" onclick="adminAuditScanRisky()" style="background:#fff;border:1px solid #c7d2fe;color:#3730a3;font-weight:700;">⚠️ 위험 케이스 전체 점검</button>
+        </div>
+        <div style="font-size:11px;color:var(--text-hint);margin-top:6px;">
+          cases·deletedCases 양쪽을 중첩 필드까지 훑습니다. 읽기만 하며 데이터는 변경하지 않습니다.
+        </div>
+        <div id="caseAuditResult" style="margin-top:10px;font-size:13px;"></div>
+      </div>
+
       <!-- 통계 -->
       <div class="admin-stats" id="adminProductStats"></div>
 
@@ -7613,6 +7630,100 @@
     } catch (e) {
       console.error('카테고리 중복 정리 실패:', e);
       showToast('정리 실패: ' + (e.message || e), 'error');
+    }
+  };
+
+  // ───── 케이스 점검 도구 ─────
+  // 객체 안의 모든 문자열 값을 재귀로 모아 검색용 텍스트로 만든다(중첩 필드 포함).
+  function _flattenValues(obj, acc) {
+    acc = acc || [];
+    if (obj == null) return acc;
+    if (typeof obj === 'string' || typeof obj === 'number') { acc.push(String(obj)); return acc; }
+    if (Array.isArray(obj)) { obj.forEach(v => _flattenValues(v, acc)); return acc; }
+    if (typeof obj === 'object') { Object.values(obj).forEach(v => _flattenValues(v, acc)); return acc; }
+    return acc;
+  }
+
+  // 고객 성함/전화번호로 cases·deletedCases 양쪽을 중첩 필드까지 검색
+  window.adminAuditFindCase = async function() {
+    const kw = (document.getElementById('caseAuditKeyword')?.value || '').trim();
+    const out = document.getElementById('caseAuditResult');
+    if (!kw) { if (out) out.innerHTML = '<span style="color:#dc2626;">검색어를 입력하세요</span>'; return; }
+    const kwDigits = kw.replace(/\D/g, '');
+    if (out) out.innerHTML = '검색 중...';
+    try {
+      const cols = ['cases', 'deletedCases'];
+      const hits = [];
+      for (const col of cols) {
+        const snap = await getDocs(collection(db, col));
+        snap.forEach(d => {
+          const data = d.data();
+          const texts = _flattenValues(data).join(' ');
+          const textDigits = texts.replace(/\D/g, '');
+          const nameHit = texts.includes(kw);
+          const phoneHit = kwDigits.length >= 7 && textDigits.includes(kwDigits);
+          if (nameHit || phoneHit) {
+            hits.push({
+              col, docId: d.id,
+              idField: data.id || '(없음)',
+              name: (data.customer && data.customer.name) || data.customerName || '?',
+              phone: (data.customer && data.customer.phone) || data.customerPhone || '?',
+              stage: data.stage || '?',
+              type: data.type || '?',
+              mismatch: (data.id && data.id !== d.id)
+            });
+          }
+        });
+      }
+      if (hits.length === 0) {
+        out.innerHTML = `<b style="color:#dc2626;">"${kw}" — cases·deletedCases 어디에도 없습니다.</b><br><span style="color:#6b7280;font-size:12px;">정말 저장되지 않았거나, 다른 컬렉션에 있을 수 있습니다.</span>`;
+        return;
+      }
+      out.innerHTML = hits.map(h => `
+        <div style="border:1px solid ${h.col==='deletedCases'?'#fca5a5':'#a7f3d0'};background:${h.col==='deletedCases'?'#fef2f2':'#f0fdf4'};border-radius:8px;padding:10px;margin-bottom:6px;">
+          <b>${h.name}</b> (${h.phone}) — <b>${h.col}</b>
+          ${h.col==='deletedCases'?'<span style="color:#dc2626;font-weight:700;"> [삭제됨]</span>':''}
+          ${h.mismatch?'<span style="color:#b45309;font-weight:700;"> ⚠️ 문서ID≠id (사라짐 위험)</span>':''}
+          <div style="font-size:12px;color:#374151;margin-top:4px;">
+            단계: ${h.stage} / 종류: ${h.type}<br>
+            문서ID: <code>${h.docId}</code><br>
+            id필드: <code>${h.idField}</code>
+          </div>
+        </div>`).join('');
+    } catch (e) {
+      console.error('케이스 검색 실패:', e);
+      out.innerHTML = '<span style="color:#dc2626;">검색 실패: ' + (e.message || e) + '</span>';
+    }
+  };
+
+  // cases 전체에서 문서ID ≠ id필드 인 위험 케이스(상태 변경 시 사라질 수 있는 것)를 찾는다
+  window.adminAuditScanRisky = async function() {
+    const out = document.getElementById('caseAuditResult');
+    if (out) out.innerHTML = '전체 점검 중... (케이스가 많으면 시간이 걸립니다)';
+    try {
+      const snap = await getDocs(collection(db, 'cases'));
+      const risky = [];
+      snap.forEach(d => {
+        const data = d.data();
+        if (data.id && data.id !== d.id) {
+          risky.push({
+            docId: d.id, idField: data.id,
+            name: (data.customer && data.customer.name) || '?',
+            stage: data.stage || '?'
+          });
+        }
+      });
+      if (risky.length === 0) {
+        out.innerHTML = `<b style="color:#059669;">✅ 위험 케이스 없음.</b> 모든 케이스의 문서ID와 id가 일치합니다.`;
+        return;
+      }
+      out.innerHTML = `<b style="color:#b45309;">⚠️ 문서ID≠id 케이스 ${risky.length}건 발견</b>
+        <span style="font-size:12px;color:#6b7280;">— 상태 변경 시 사라질 수 있던 케이스입니다. (이번 수정으로 앞으로는 안전)</span>`
+        + risky.map(r => `<div style="font-size:12px;border:1px solid #fde68a;background:#fffbeb;border-radius:6px;padding:7px;margin-top:5px;">
+            <b>${r.name}</b> (단계: ${r.stage})<br>문서ID: <code>${r.docId}</code> / id: <code>${r.idField}</code></div>`).join('');
+    } catch (e) {
+      console.error('위험 케이스 점검 실패:', e);
+      out.innerHTML = '<span style="color:#dc2626;">점검 실패: ' + (e.message || e) + '</span>';
     }
   };
 
@@ -9096,7 +9207,7 @@
     let ok = 0, fail = 0;
     for (const c of targets) {
       try {
-        await setDoc(doc(db, 'cases', c.id), {
+        await setDoc(doc(db, 'cases', (c._docId || c.id)), {
           erpReadyForInput: true,
           erpProcessed: false,
           updatedAt: serverTimestamp()
@@ -9141,7 +9252,7 @@
           updateData.erpPartsUploadedAt = serverTimestamp();
           updateData.erpPartsUploadedBy = 'system (자동: 사용부품 없음 — ERP누락복구)';
         }
-        await setDoc(doc(db, 'cases', c.id), updateData, { merge: true });
+        await setDoc(doc(db, 'cases', (c._docId || c.id)), updateData, { merge: true });
         ok++;
       } catch (e) {
         console.error('fixErpParts 실패:', c.id, e);
@@ -18223,7 +18334,7 @@
         updateData.statusHistory = [...(c.statusHistory || []), historyEntry];
       }
 
-      await setDoc(doc(db, 'cases', c.id), updateData, { merge: true });
+      await setDoc(doc(db, 'cases', (c._docId || c.id)), updateData, { merge: true });
 
       // 깜빡임 효과 (로컬 표시)
       const cardRow = document.querySelector(`.dash-card-row[onclick*="${docId}"]`);
@@ -18261,7 +18372,7 @@
     if (role === 'minwon') {
       if (!confirm('민원 표시를 해제하시겠습니까?\n\n단계는 그대로 유지됩니다.')) return;
       try {
-        await setDoc(doc(db, 'cases', c.id), {
+        await setDoc(doc(db, 'cases', (c._docId || c.id)), {
           minwon: false, statusUpdatedAt: serverTimestamp(),
           statusUpdatedBy: NAS_USER || '관리자', updatedAt: serverTimestamp()
         }, { merge: true });
@@ -18290,7 +18401,7 @@
       else if (role === 'engineer') updateData.statusByEngineer = '';
       else if (role === 'legacy') updateData.status = '';
 
-      await setDoc(doc(db, 'cases', c.id), updateData, { merge: true });
+      await setDoc(doc(db, 'cases', (c._docId || c.id)), updateData, { merge: true });
       showToast('상태 삭제 완료', 'success');
     } catch (e) {
       console.error('상태 삭제 실패:', e);
@@ -19167,7 +19278,7 @@
         note: ''
       };
 
-      await setDoc(doc(db, 'cases', c.id), {
+      await setDoc(doc(db, 'cases', (c._docId || c.id)), {
         happycallStaff: newStaff,
         statusHistory: [...(c.statusHistory || []), historyEntry],
         updatedAt: serverTimestamp(),
@@ -20015,7 +20126,7 @@
         action: '유형전환',
         note: `🔁 ${fromType} → ${newType} 전환 → 확인요청` + (memo ? ` (${memo})` : '')
       };
-      await setDoc(doc(db, 'cases', c.id), {
+      await setDoc(doc(db, 'cases', (c._docId || c.id)), {
         type: newType, erpType: newType,
         stage: '확인요청',
         returnStage: c.stage || '해피콜대기',
@@ -20413,7 +20524,7 @@
     document.getElementById('erpNpModalCloseBtn').addEventListener('click', () => window.dashErpNpWorkCloseModal());
     document.getElementById('erpNpModalDoneBtn').addEventListener('click', async () => {
       try {
-        await setDoc(doc(db, 'cases', c.id), {
+        await setDoc(doc(db, 'cases', (c._docId || c.id)), {
           newProductErpDone: true,
           newProductErpDoneAt: serverTimestamp(),
           newProductErpDoneBy: NAS_USER || '관리자',
@@ -20926,7 +21037,7 @@
         }
       }
 
-      await setDoc(doc(db, 'cases', c.id), updateData, { merge: true });
+      await setDoc(doc(db, 'cases', (c._docId || c.id)), updateData, { merge: true });
       showToast(`✅ ${c.id} 전산입력 완료 처리`, 'success');
       setTimeout(() => window.renderErpWork(), 300);
     } catch (e) {
@@ -21330,7 +21441,7 @@
       const c = window._newProductCurrentCase;
       if (c && c.id && window._newProductCompletedFlag !== true) {
         // 비동기 — UI 차단하지 않음
-        setDoc(doc(db, 'cases', c.id), {
+        setDoc(doc(db, 'cases', (c._docId || c.id)), {
           newProductAssignedEngineer: null,
           newProductAssignedAt: null,
           updatedAt: serverTimestamp()
@@ -21383,7 +21494,7 @@
       const currentUser = (typeof NAS_USER !== 'undefined' && NAS_USER) ? NAS_USER : '';
       if (currentUser && c && c.id) {
         // 비동기 — UI 차단하지 않음, 실패해도 모달은 열림
-        setDoc(doc(db, 'cases', c.id), {
+        setDoc(doc(db, 'cases', (c._docId || c.id)), {
           newProductAssignedEngineer: currentUser,
           newProductAssignedAt: serverTimestamp(),
           updatedAt: serverTimestamp()
@@ -22711,7 +22822,7 @@
         role: 'engineer'
       };
 
-      await setDoc(doc(db, 'cases', c.id), {
+      await setDoc(doc(db, 'cases', (c._docId || c.id)), {
         ...updateData,
         statusHistory: arrayUnion(histEntry)
       }, { merge: true });
@@ -24215,7 +24326,7 @@
         // 레거시 status는 손대지 않음 (있으면 그대로 둠)
       }
 
-      await setDoc(doc(db, 'cases', c.id), updateData, { merge: true });
+      await setDoc(doc(db, 'cases', (c._docId || c.id)), updateData, { merge: true });
       // 로컬 캐시 즉시 갱신 (onSnapshot 도착 전에도 최신 상태 반영)
       const cacheIdx = dashAllCases.findIndex(x => x.id === c.id);
       if (cacheIdx >= 0) Object.assign(dashAllCases[cacheIdx], updateData);
@@ -24892,7 +25003,7 @@
     }
 
     try {
-      await setDoc(doc(db, 'cases', c.id), updateData, { merge: true });
+      await setDoc(doc(db, 'cases', (c._docId || c.id)), updateData, { merge: true });
 
       // (v15) 재고 차감 동기화 — partsUsed 변화분만큼 inventory 조정
       if (typeof window.inventoryDeductFromCase === 'function') {
