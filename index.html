@@ -5063,6 +5063,10 @@
     list.innerHTML = items.map(t => `<li>${t}</li>`).join('');
     box.style.display = 'block';
   };
+
+  // (step36) 접수폼 작성 중이면 true. 등록 버튼(submitBtn/erp_submitBtn)이 화면에 실제로
+  //   보이는지로 판단한다. offsetParent가 null이면 숨겨진 상태(=폼 화면 아님).
+  function isWritingForm() {
     const ids = ['submitBtn', 'erp_submitBtn'];
     return ids.some(id => {
       const el = document.getElementById(id);
