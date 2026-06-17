@@ -3823,6 +3823,10 @@
             <span class="admin-menu-icon">📜</span>
             <span>변경 이력</span>
           </div>
+          <div class="admin-menu-item" data-admin="caseAudit" onclick="adminShowSection('caseAudit')">
+            <span class="admin-menu-icon">🔎</span>
+            <span>케이스 점검</span>
+          </div>
           <div class="admin-menu-item" data-admin="uploadFailLog" onclick="adminShowSection('uploadFailLog')">
             <span class="admin-menu-icon">⚠️</span>
             <span>NAS 업로드 실패 로그 <span id="uploadFailBadge" style="display:none;background:#FCEBEB;color:#791F1F;font-size:10px;padding:1px 6px;border-radius:9px;font-weight:700;margin-left:4px;">0</span></span>
@@ -5014,7 +5018,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v36';
+  const APP_VERSION = 'v37';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -5039,6 +5043,13 @@
 
   // (step37) 버전별 수정사항 — 모달에 표시. 최신 배포 항목을 맨 위에 추가하면 됩니다.
   const VERSION_CHANGELOG = {
+    'v37': [
+      '교환/반품 접수 시 제품군이 여러 번 중복으로 늘어나던 문제 수정',
+      '안심번호(050 계열) 핸드폰 입력 지원',
+      '업데이트 시 접수 등록 중 등록 버튼 누르면 구버전 자동 차단 (새로고침 안내)',
+      '일부 접수건이 상태 변경 시 사라지던 문제 수정',
+      '업데이트 알림에 변경 내용이 표시되도록 개선'
+    ],
     'v36': [
       '업데이트 알림에 변경 내용이 표시되도록 개선'
     ],
@@ -7267,6 +7278,21 @@
       adminRenderAudit();
       return;
     }
+    if (section === 'caseAudit') {
+      if (!window.canDo('write', 'historyView')) {
+        const content = document.getElementById('adminContent');
+        content.innerHTML = `
+          <div class="admin-placeholder">
+            <div class="admin-placeholder-icon">🔒</div>
+            <h4>케이스 점검 권한이 없습니다</h4>
+            <p>이 화면은 마스터만 접근할 수 있습니다.</p>
+          </div>
+        `;
+        return;
+      }
+      adminRenderCaseAudit();
+      return;
+    }
     if (section === 'uploadFailLog') {
       // (v27) NAS 업로드 실패 로그 — 마스터만
       if (!window.canDo('write', 'historyView')) {
@@ -7450,19 +7476,7 @@
         </span>
       </div>
 
-      <!-- (케이스 점검) 사라진/위험 케이스 찾기 -->
-      <div style="margin:8px 0 12px;padding:12px;border:1px solid #c7d2fe;border-radius:9px;background:#eef2ff;">
-        <div style="font-size:13px;font-weight:800;color:#3730a3;margin-bottom:8px;">🔎 케이스 점검 도구</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
-          <input id="caseAuditKeyword" placeholder="고객 성함 또는 전화번호" style="padding:8px 10px;border:1px solid #c7d2fe;border-radius:7px;font-size:13px;min-width:200px;">
-          <button type="button" class="admin-btn" onclick="adminAuditFindCase()" style="background:#4f46e5;color:#fff;font-weight:700;">고객 케이스 찾기</button>
-          <button type="button" class="admin-btn" onclick="adminAuditScanRisky()" style="background:#fff;border:1px solid #c7d2fe;color:#3730a3;font-weight:700;">⚠️ 위험 케이스 전체 점검</button>
-        </div>
-        <div style="font-size:11px;color:var(--text-hint);margin-top:6px;">
-          cases·deletedCases 양쪽을 중첩 필드까지 훑습니다. 읽기만 하며 데이터는 변경하지 않습니다.
-        </div>
-        <div id="caseAuditResult" style="margin-top:10px;font-size:13px;"></div>
-      </div>
+      <!-- (케이스 점검 도구는 관리자 메뉴 '🔎 케이스 점검'으로 이동) -->
 
       <!-- 통계 -->
       <div class="admin-stats" id="adminProductStats"></div>
@@ -7643,6 +7657,34 @@
   };
 
   // ───── 케이스 점검 도구 ─────
+  // 케이스 점검 전용 화면 렌더
+  window.adminRenderCaseAudit = function() {
+    const content = document.getElementById('adminContent');
+    if (!content) return;
+    content.innerHTML = `
+      <div style="padding:20px;">
+        <h2 style="margin:0 0 4px;font-size:20px;font-weight:600;">🔎 케이스 점검</h2>
+        <div style="font-size:12px;color:#9ca3af;margin-bottom:16px;">사라진/위험 케이스를 찾습니다. cases·deletedCases 양쪽을 중첩 필드까지 훑으며, 읽기만 하고 데이터는 변경하지 않습니다.</div>
+
+        <div style="border:1px solid #c7d2fe;border-radius:10px;background:#eef2ff;padding:16px;margin-bottom:14px;">
+          <div style="font-size:14px;font-weight:800;color:#3730a3;margin-bottom:10px;">고객으로 찾기</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;">
+            <input id="caseAuditKeyword" placeholder="고객 성함 또는 전화번호" style="padding:9px 12px;border:1px solid #c7d2fe;border-radius:7px;font-size:13px;min-width:240px;">
+            <button type="button" class="admin-btn" onclick="adminAuditFindCase()" style="background:#4f46e5;color:#fff;font-weight:700;">고객 케이스 찾기</button>
+          </div>
+        </div>
+
+        <div style="border:1px solid #fde68a;border-radius:10px;background:#fffbeb;padding:16px;margin-bottom:14px;">
+          <div style="font-size:14px;font-weight:800;color:#92400e;margin-bottom:6px;">전체 위험 점검</div>
+          <div style="font-size:12px;color:#a16207;margin-bottom:10px;">문서ID와 id가 어긋난 케이스(상태 변경 시 사라질 수 있던 것)를 전부 찾습니다.</div>
+          <button type="button" class="admin-btn" onclick="adminAuditScanRisky()" style="background:#f59e0b;color:#fff;font-weight:700;">⚠️ 위험 케이스 전체 점검</button>
+        </div>
+
+        <div id="caseAuditResult" style="font-size:13px;"></div>
+      </div>
+    `;
+  };
+
   // 객체 안의 모든 문자열 값을 재귀로 모아 검색용 텍스트로 만든다(중첩 필드 포함).
   function _flattenValues(obj, acc) {
     acc = acc || [];
