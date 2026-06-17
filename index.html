@@ -3290,9 +3290,13 @@
 <body class="login-mode">
 
 <!-- (v27) 버전 알림 배너 -->
-<div id="versionBanner" style="display:none;background:#FAEEDA;color:#854F0B;padding:10px 16px;border-bottom:1px solid #EF9F27;font-size:13px;text-align:center;position:sticky;top:0;z-index:10000;">
-  <span id="versionBannerMessage">⚠️ 새 버전이 배포되었습니다. 새로고침해주세요.</span>
-  <button onclick="window.location.reload(true);" style="margin-left:12px;padding:6px 14px;background:#854F0B;color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;">🔄 지금 새로고침</button>
+<div id="versionBanner" style="display:none;position:fixed;inset:0;z-index:100000;background:rgba(0,0,0,0.55);align-items:center;justify-content:center;">
+  <div style="background:#FAEEDA;color:#854F0B;border:2px solid #EF9F27;border-radius:16px;padding:32px 28px;max-width:420px;width:88%;text-align:center;box-shadow:0 12px 40px rgba(0,0,0,0.3);">
+    <div style="font-size:44px;line-height:1;margin-bottom:14px;">⚠️</div>
+    <div style="font-size:19px;font-weight:800;margin-bottom:10px;">새 버전이 배포되었습니다</div>
+    <div id="versionBannerMessage" style="font-size:14px;line-height:1.5;margin-bottom:22px;">새로고침해주세요.</div>
+    <button onclick="window.location.reload(true);" style="width:100%;padding:14px;background:#854F0B;color:#fff;border:none;border-radius:10px;font-size:16px;font-weight:800;cursor:pointer;">🔄 지금 새로고침</button>
+  </div>
 </div>
 
 <!-- (v20) 환경 감지 — DOM 파싱 직후 즉시 적절한 로그인 카드만 보이게 (깜빡임 방지)
@@ -5006,9 +5010,52 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v31';
+  const APP_VERSION = 'v33';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
+
+  // (step36) 최신 버전 보관 — onSnapshot/getDoc이 Firestore 최신 버전을 받을 때마다 갱신.
+  //   접수 등록 직전 구버전 여부를 판단하는 데 사용한다.
+  window._latestAppVersion = null;
+  // 등록 직전 호출: 구버전이면 모달 띄우고 true 반환(=등록 막아야 함), 최신이면 false.
+  window.blockIfOutdated = function() {
+    const latest = window._latestAppVersion;
+    if (latest && latest !== APP_VERSION) {
+      const banner = document.getElementById('versionBanner');
+      const msg = document.getElementById('versionBannerMessage');
+      if (banner && msg) {
+        msg.textContent = `현재 버전(${APP_VERSION})은 예전 버전입니다. 새로고침 후 다시 등록해주세요. (최신 ${latest})`;
+        banner.style.display = 'flex';
+      }
+      return true;
+    }
+    return false;
+  };
+
+  // (step36) 접수폼 작성 중이면 true. 등록 버튼(submitBtn/erp_submitBtn)이 화면에 실제로
+  //   보이는지로 판단한다. offsetParent가 null이면 숨겨진 상태(=폼 화면 아님).
+  function isWritingForm() {
+    const ids = ['submitBtn', 'erp_submitBtn'];
+    return ids.some(id => {
+      const el = document.getElementById(id);
+      return el && el.offsetParent !== null;
+    });
+  }
+  // 자동(실시간) 버전 알림 표시 — 폼 작성 중이면 띄우지 않는다.
+  //   작성 중에 갑자기 모달이 떠서 [새로고침]으로 내용이 날아가는 것을 방지.
+  //   대신 등록 버튼을 누르는 순간 blockIfOutdated가 막아준다.
+  function showVersionModalAuto(latestVer) {
+    if (isWritingForm()) {
+      console.log('[버전 체크] 접수폼 작성 중 — 자동 모달 보류 (등록 시 차단됨)');
+      return;
+    }
+    const banner = document.getElementById('versionBanner');
+    const msg = document.getElementById('versionBannerMessage');
+    if (banner && msg) {
+      msg.textContent = `현재 버전(${APP_VERSION}) → 최신 버전(${latestVer}). 새로고침하면 적용됩니다.`;
+      banner.style.display = 'flex';
+    }
+  }
 
   // 버전 체크 — 페이지 로드 후 + 주기적으로 (5분마다) Firestore 최신 버전 확인
   async function checkAppVersion() {
@@ -5026,14 +5073,10 @@
       console.log('[버전 체크] data 키:', Object.keys(data));
       const latestVer = data.version;
       console.log('[버전 체크] 현재:', APP_VERSION, '/ 최신:', latestVer);
+      window._latestAppVersion = latestVer;
       if (latestVer && latestVer !== APP_VERSION) {
-        const banner = document.getElementById('versionBanner');
-        const msg = document.getElementById('versionBannerMessage');
-        if (banner && msg) {
-          msg.textContent = `⚠️ 새 버전(${latestVer})이 배포되었습니다. 현재 버전(${APP_VERSION}) — 새로고침해주세요.`;
-          banner.style.display = 'block';
-          console.log('[버전 체크] 배너 표시!');
-        }
+        showVersionModalAuto(latestVer);
+        console.log('[버전 체크] 배너 표시 시도!');
       } else {
         console.log('[버전 체크] 버전 일치 — 배너 표시 안 함');
       }
@@ -5050,13 +5093,9 @@
         if (!snap.exists()) return;
         const latestVer = snap.data().version;
         console.log('[버전 체크 실시간] 현재:', APP_VERSION, '/ 최신:', latestVer);
+        window._latestAppVersion = latestVer;
         if (latestVer && latestVer !== APP_VERSION) {
-          const banner = document.getElementById('versionBanner');
-          const msg = document.getElementById('versionBannerMessage');
-          if (banner && msg) {
-            msg.textContent = `⚠️ 새 버전(${latestVer})이 배포되었습니다. 현재 버전(${APP_VERSION}) — 새로고침해주세요.`;
-            banner.style.display = 'block';
-          }
+          showVersionModalAuto(latestVer);
         }
       }, (err) => { console.warn('버전 구독 실패:', err); });
     } catch(e) { console.warn('버전 구독 시작 실패:', e); }
@@ -7355,6 +7394,17 @@
         💡 카테고리 / 제품명은 30명 모두에게 실시간 공유됩니다. 처음 사용 시 [신규 등록]으로 한두 개 추가해보세요.
       </div>
 
+      <!-- (중복 정리) 같은 이름의 카테고리가 여러 개 쌓였을 때 1건만 남기고 정리 -->
+      <div style="margin:8px 0 12px;">
+        <button type="button" class="admin-btn" onclick="adminCleanupDuplicateCategories()"
+          style="background:#fef3c7;border:1px solid #f59e0b;color:#92400e;font-weight:700;">
+          🧹 카테고리 중복 정리
+        </button>
+        <span style="font-size:11px;color:var(--text-hint);margin-left:8px;">
+          교환/반품 폼에 제품군이 여러 번 반복돼 보일 때 누르세요 (같은 이름은 1개만 남깁니다)
+        </span>
+      </div>
+
       <!-- 통계 -->
       <div class="admin-stats" id="adminProductStats"></div>
 
@@ -7416,7 +7466,11 @@
       snap.forEach(d => items.push({ id: d.id, ...d.data() }));
 
       // 빈 컬렉션이면 기본 4개 자동 시드 (최초 1회만)
-      if (items.length === 0 && !window._adminCategoriesSeeded) {
+      // (보강) 캐시에서 온 스냅샷이거나 서버 미반영(pending) 상태면 시드하지 않는다.
+      //   네트워크 연결 직후 onSnapshot이 빈 캐시 스냅샷을 먼저 흘리는 경우가 있어,
+      //   그 순간을 "진짜 0건"으로 오해해 중복 시드되던 문제를 막는다.
+      const _fromCache = snap.metadata && snap.metadata.fromCache;
+      if (items.length === 0 && !window._adminCategoriesSeeded && !_fromCache) {
         window._adminCategoriesSeeded = true;
         await adminSeedDefaultCategories();
         return; // 시드 후 onSnapshot이 다시 트리거됨
@@ -7460,8 +7514,17 @@
   // 기본 카테고리 시드 (Firestore 비어있을 때 1회만)
   async function adminSeedDefaultCategories() {
     try {
+      // (안전장치1) 시드 직전 실제로 한 번 더 조회 — onSnapshot이 순간적으로 빈 스냅샷을
+      //   흘렸을 때 헛심는 것을 방지. 실제로 1건이라도 있으면 시드하지 않는다.
+      const existSnap = await getDocs(collection(db, 'categories'));
+      if (!existSnap.empty) {
+        console.log('[시드 취소] 이미 카테고리 존재:', existSnap.size, '건');
+        return;
+      }
+      // (안전장치2) addDoc → setDoc(이름을 문서 ID로). 같은 이름이면 새 문서가 아니라
+      //   덮어쓰기가 되므로, 여러 번 실행돼도 카테고리는 4개를 넘지 않는다.
       for (let i = 0; i < DEFAULT_CATEGORIES.length; i++) {
-        await addDoc(collection(db, 'categories'), {
+        await setDoc(doc(db, 'categories', DEFAULT_CATEGORIES[i]), {
           name: DEFAULT_CATEGORIES[i],
           order: i + 1,
           active: true,
@@ -7475,6 +7538,50 @@
       showToast('기본 카테고리 등록 실패: ' + e.message, 'error');
     }
   }
+
+  // ───── 카테고리 중복 정리 ─────
+  // 같은 name을 가진 문서가 여러 개일 때, 하나(order가 가장 작은 것 = 가장 먼저 만들어진 것)만
+  // 남기고 나머지는 삭제한다. 데이터(제품·접수)는 카테고리 '이름'으로 연결돼 있으므로
+  // 이름이 보존되면 기존 데이터에는 영향이 없다.
+  window.adminCleanupDuplicateCategories = async function() {
+    try {
+      const snap = await getDocs(collection(db, 'categories'));
+      const byName = {};
+      snap.forEach(d => {
+        const data = d.data();
+        const nm = data.name || '';
+        if (!byName[nm]) byName[nm] = [];
+        byName[nm].push({ id: d.id, order: data.order || 0 });
+      });
+
+      // 삭제 대상 = 같은 이름 그룹에서 order 최소 1건을 뺀 나머지
+      const toDelete = [];
+      Object.keys(byName).forEach(nm => {
+        const arr = byName[nm];
+        if (arr.length <= 1) return;
+        arr.sort((a, b) => a.order - b.order); // order 작은 게 0번 = 남길 것
+        for (let i = 1; i < arr.length; i++) toDelete.push(arr[i].id);
+      });
+
+      if (toDelete.length === 0) {
+        showToast('중복된 카테고리가 없습니다 ✅', 'success');
+        return;
+      }
+
+      const dupNames = Object.keys(byName).filter(nm => byName[nm].length > 1).join(', ');
+      if (!confirm(`중복 카테고리 ${toDelete.length}건을 정리할까요?\n\n대상: ${dupNames}\n\n같은 이름은 1개만 남깁니다. 제품·접수 데이터에는 영향이 없습니다.`)) return;
+
+      let done = 0;
+      for (const id of toDelete) {
+        try { await deleteDoc(doc(db, 'categories', id)); done++; }
+        catch (e) { console.warn('카테고리 삭제 실패:', id, e); }
+      }
+      showToast(`✅ 중복 카테고리 ${done}건 정리 완료`, 'success');
+    } catch (e) {
+      console.error('카테고리 중복 정리 실패:', e);
+      showToast('정리 실패: ' + (e.message || e), 'error');
+    }
+  };
 
   // 제품 실시간 리스너
   function adminStartProductsSync() {
@@ -28102,6 +28209,10 @@
 
   // ==================== 폼 제출 ====================
   window.submitForm = async function() {
+    // (step36) 구버전이면 등록 막고 모달 표시 — 작성 내용은 그대로 유지됨.
+    //   직원은 임시저장 후 새로고침하거나, 새로고침 후 다시 등록.
+    if (window.blockIfOutdated && window.blockIfOutdated()) return;
+
     // 수정 모드면 신규 등록 차단 (수정 전용 버튼을 사용해야 함)
     if (window._editModeCaseId) {
       showToast('수정 모드입니다. 배너 안의 버튼으로 저장하세요.', 'error');
@@ -29934,6 +30045,9 @@
   };
 
   window.submitErpForm = async function() {
+    // (step36) 구버전이면 등록 막고 모달 표시 — 작성 내용은 그대로 유지됨.
+    if (window.blockIfOutdated && window.blockIfOutdated()) return;
+
     // 입력값 수집
     const type = document.getElementById('erp_type').value;
     const custName = document.getElementById('erp_custName').value.trim();
