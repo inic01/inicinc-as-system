@@ -3294,7 +3294,11 @@
   <div style="background:#FAEEDA;color:#854F0B;border:2px solid #EF9F27;border-radius:16px;padding:32px 28px;max-width:420px;width:88%;text-align:center;box-shadow:0 12px 40px rgba(0,0,0,0.3);">
     <div style="font-size:44px;line-height:1;margin-bottom:14px;">⚠️</div>
     <div style="font-size:19px;font-weight:800;margin-bottom:10px;">새 버전이 배포되었습니다</div>
-    <div id="versionBannerMessage" style="font-size:14px;line-height:1.5;margin-bottom:22px;">새로고침해주세요.</div>
+    <div id="versionBannerMessage" style="font-size:14px;line-height:1.5;margin-bottom:16px;">새로고침해주세요.</div>
+    <div id="versionChangelog" style="display:none;text-align:left;background:#fff;border:1px solid #EAD9B0;border-radius:10px;padding:14px 16px;margin-bottom:20px;max-height:200px;overflow-y:auto;">
+      <div style="font-size:12px;font-weight:800;color:#92400e;margin-bottom:8px;">📋 이번 업데이트 내용</div>
+      <ul id="versionChangelogList" style="margin:0;padding-left:18px;font-size:13px;line-height:1.7;color:#5b4a2a;"></ul>
+    </div>
     <button onclick="window.location.reload(true);" style="width:100%;padding:14px;background:#854F0B;color:#fff;border:none;border-radius:10px;font-size:16px;font-weight:800;cursor:pointer;">🔄 지금 새로고침</button>
   </div>
 </div>
@@ -5010,7 +5014,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v33';
+  const APP_VERSION = 'v34';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -5025,6 +5029,7 @@
       const msg = document.getElementById('versionBannerMessage');
       if (banner && msg) {
         msg.textContent = `현재 버전(${APP_VERSION})은 예전 버전입니다. 새로고침 후 다시 등록해주세요. (최신 ${latest})`;
+        if (window.fillVersionChangelog) window.fillVersionChangelog(latest);
         banner.style.display = 'flex';
       }
       return true;
@@ -5032,9 +5037,32 @@
     return false;
   };
 
-  // (step36) 접수폼 작성 중이면 true. 등록 버튼(submitBtn/erp_submitBtn)이 화면에 실제로
-  //   보이는지로 판단한다. offsetParent가 null이면 숨겨진 상태(=폼 화면 아님).
-  function isWritingForm() {
+  // (step37) 버전별 수정사항 — 모달에 표시. 최신 배포 항목을 맨 위에 추가하면 됩니다.
+  const VERSION_CHANGELOG = {
+    'v34': [
+      '안심번호(050 계열) 핸드폰 입력 지원'
+    ],
+    'v33': [
+      '업데이트 시 접수 등록 중인 상태에서 접수등록하기 버튼 누르면 구버전 사용 자동 차단 (등록 누르면 새로고침 안내)'
+    ],
+    'v32': [
+      '교환/반품 제품군이 중복으로 늘어나던 문제 수정',
+      '카테고리 중복 정리 버튼 추가'
+    ],
+    'v31': [
+      '버전 알림을 화면 중앙 모달로 변경'
+    ]
+  };
+  // 모달의 수정사항 목록을 채운다. 최신 버전 항목을 보여준다.
+  window.fillVersionChangelog = function(latestVer) {
+    const box = document.getElementById('versionChangelog');
+    const list = document.getElementById('versionChangelogList');
+    if (!box || !list) return;
+    const items = VERSION_CHANGELOG[latestVer];
+    if (!items || items.length === 0) { box.style.display = 'none'; return; }
+    list.innerHTML = items.map(t => `<li>${t}</li>`).join('');
+    box.style.display = 'block';
+  };
     const ids = ['submitBtn', 'erp_submitBtn'];
     return ids.some(id => {
       const el = document.getElementById(id);
@@ -5053,6 +5081,7 @@
     const msg = document.getElementById('versionBannerMessage');
     if (banner && msg) {
       msg.textContent = `현재 버전(${APP_VERSION}) → 최신 버전(${latestVer}). 새로고침하면 적용됩니다.`;
+      if (window.fillVersionChangelog) window.fillVersionChangelog(latestVer);
       banner.style.display = 'flex';
     }
   }
@@ -27755,31 +27784,43 @@
   });
 
   // ==================== 핸드폰 자동 하이픈 ====================
-  document.getElementById('custPhone').addEventListener('input', (e) => {
-    let v = e.target.value.replace(/\D/g, '');
-    if (v.length > 11) v = v.slice(0, 11);
-    if (v.length >= 7) {
-      e.target.value = v.slice(0, 3) + '-' + v.slice(3, 7) + '-' + v.slice(7);
-    } else if (v.length >= 4) {
-      e.target.value = v.slice(0, 3) + '-' + v.slice(3);
-    } else {
-      e.target.value = v;
+  // (step37) 휴대폰/안심번호 자동 하이픈 포맷
+  //   - 일반 휴대폰: 010-0000-0000 (11자리)
+  //   - 안심번호: 0504-0000-0000 / 050-0000-0000 등 (12~13자리, 050 계열)
+  //   - 지역번호/일반전화: 02-000-0000, 031-000-0000 등도 깨지지 않게 처리
+  window.formatPhoneSmart = function(raw) {
+    let v = String(raw || '').replace(/\D/g, '');
+    // 안심번호(0505, 0504, 050x): 최대 12자리. 4-4-4 또는 4-3-4 형태
+    if (v.startsWith('050')) {
+      v = v.slice(0, 12);
+      if (v.length <= 4) return v;
+      if (v.length <= 8) return v.slice(0, 4) + '-' + v.slice(4);
+      return v.slice(0, 4) + '-' + v.slice(4, 8) + '-' + v.slice(8);
     }
+    // 서울 02
+    if (v.startsWith('02')) {
+      v = v.slice(0, 10);
+      if (v.length <= 2) return v;
+      if (v.length <= 6) return v.slice(0, 2) + '-' + v.slice(2);
+      if (v.length <= 9) return v.slice(0, 2) + '-' + v.slice(2, 5) + '-' + v.slice(5);
+      return v.slice(0, 2) + '-' + v.slice(2, 6) + '-' + v.slice(6);
+    }
+    // 그 외(휴대폰 010 / 지역번호 0XX): 최대 11자리, 3-4-4
+    v = v.slice(0, 11);
+    if (v.length >= 7) return v.slice(0, 3) + '-' + v.slice(3, 7) + '-' + v.slice(7);
+    if (v.length >= 4) return v.slice(0, 3) + '-' + v.slice(3);
+    return v;
+  };
+
+  document.getElementById('custPhone').addEventListener('input', (e) => {
+    e.target.value = window.formatPhoneSmart(e.target.value);
   });
 
   // (v17) 교환/반품 폼 전화번호도 동일한 자동 하이픈 처리
   const _erpPhoneEl = document.getElementById('erp_custPhone');
   if (_erpPhoneEl) {
     _erpPhoneEl.addEventListener('input', (e) => {
-      let v = e.target.value.replace(/\D/g, '');
-      if (v.length > 11) v = v.slice(0, 11);
-      if (v.length >= 7) {
-        e.target.value = v.slice(0, 3) + '-' + v.slice(3, 7) + '-' + v.slice(7);
-      } else if (v.length >= 4) {
-        e.target.value = v.slice(0, 3) + '-' + v.slice(3);
-      } else {
-        e.target.value = v;
-      }
+      e.target.value = window.formatPhoneSmart(e.target.value);
     });
   }
 
@@ -28310,9 +28351,12 @@
       }
     }
 
-    // 핸드폰 형식 간단 검증
+    // 핸드폰 형식 검증 (일반 휴대폰 10~11자리 / 안심번호 050계열 11~12자리 허용)
     const phoneDigits = custPhone.replace(/\D/g, '');
-    if (phoneDigits.length < 10) return showToastAndFocus('핸드폰 번호를 확인하세요', 'custPhone');
+    const isSafeNum = phoneDigits.startsWith('050');
+    const okLen = isSafeNum ? (phoneDigits.length >= 11 && phoneDigits.length <= 12)
+                            : (phoneDigits.length >= 9 && phoneDigits.length <= 11);
+    if (!okLen) return showToastAndFocus('핸드폰(또는 안심번호)을 확인하세요', 'custPhone');
 
     // 파일 첨부 필수화 (확인요청 모드 제외)
     if (!isReinspect) {
