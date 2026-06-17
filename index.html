@@ -5014,7 +5014,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v35';
+  const APP_VERSION = 'v36';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -5039,6 +5039,9 @@
 
   // (step37) 버전별 수정사항 — 모달에 표시. 최신 배포 항목을 맨 위에 추가하면 됩니다.
   const VERSION_CHANGELOG = {
+    'v36': [
+      '업데이트 알림에 변경 내용이 표시되도록 개선'
+    ],
     'v35': [
       '일부 접수건이 상태 변경 시 사라지던 문제 수정'
     ],
@@ -5056,12 +5059,16 @@
       '버전 알림을 화면 중앙 모달로 변경'
     ]
   };
-  // 모달의 수정사항 목록을 채운다. 최신 버전 항목을 보여준다.
+  // 모달의 수정사항 목록을 채운다.
+  //   1순위: Firebase config/appVersion의 changes 배열 (옛날 파일도 최신 내용을 볼 수 있음)
+  //   2순위: 코드 내장 VERSION_CHANGELOG (Firebase에 changes가 없을 때)
   window.fillVersionChangelog = function(latestVer) {
     const box = document.getElementById('versionChangelog');
     const list = document.getElementById('versionChangelogList');
     if (!box || !list) return;
-    const items = VERSION_CHANGELOG[latestVer];
+    let items = (Array.isArray(window._latestChanges) && window._latestChanges.length > 0)
+      ? window._latestChanges
+      : VERSION_CHANGELOG[latestVer];
     if (!items || items.length === 0) { box.style.display = 'none'; return; }
     list.innerHTML = items.map(t => `<li>${t}</li>`).join('');
     box.style.display = 'block';
@@ -5110,6 +5117,7 @@
       const latestVer = data.version;
       console.log('[버전 체크] 현재:', APP_VERSION, '/ 최신:', latestVer);
       window._latestAppVersion = latestVer;
+      window._latestChanges = Array.isArray(data.changes) ? data.changes : null;
       if (latestVer && latestVer !== APP_VERSION) {
         showVersionModalAuto(latestVer);
         console.log('[버전 체크] 배너 표시 시도!');
@@ -5130,6 +5138,7 @@
         const latestVer = snap.data().version;
         console.log('[버전 체크 실시간] 현재:', APP_VERSION, '/ 최신:', latestVer);
         window._latestAppVersion = latestVer;
+        window._latestChanges = Array.isArray(snap.data().changes) ? snap.data().changes : null;
         if (latestVer && latestVer !== APP_VERSION) {
           showVersionModalAuto(latestVer);
         }
@@ -9534,18 +9543,30 @@
         const actionBtn = isResolved
           ? '<button type="button" onclick="window.adminUploadFailUnresolve(\'' + r.id + '\')" style="padding:5px 10px;background:#fff;border:1px solid #d1d5db;color:#6b7280;border-radius:6px;font-size:11px;cursor:pointer;">미확인으로</button>'
           : '<button type="button" onclick="window.adminUploadFailResolve(\'' + r.id + '\')" style="padding:5px 10px;background:#1D9E75;color:#fff;border:none;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;">✅ 확인 완료</button>';
+        const checkboxCell = isResolved
+          ? '<td style="padding:9px 10px;text-align:center;"></td>'
+          : '<td style="padding:9px 10px;text-align:center;"><input type="checkbox" class="uploadFailChk" value="' + r.id + '" onchange="window.uploadFailSyncHeader()" style="width:16px;height:16px;cursor:pointer;"></td>';
         return `<tr style="border-top:1px solid #f1f3f5;">
+          ${checkboxCell}
           <td style="padding:9px 10px;color:#6b7280;font-size:12px;white-space:nowrap;">${tStr}</td>
           <td style="padding:9px 10px;font-family:monospace;font-size:12px;">${escapeHtml(r.caseId || '-')}</td>
-          <td style="padding:9px 10px;font-size:12px;word-break:break-all;">${escapeHtml(r.fileName || '-')}</td>
+          <td style="padding:9px 10px;font-size:12px;word-break:break-all;">${escapeHtml(r.fileName || '-')}${(r.retryCount && r.retryCount > 1) ? ' <span style="color:#dc2626;font-size:11px;font-weight:700;">(재시도 ' + r.retryCount + '회)</span>' : ''}</td>
           <td style="padding:9px 10px;font-size:13px;">${escapeHtml(uploaderName)}</td>
           <td style="padding:9px 10px;text-align:center;">${statusBadge}</td>
           <td style="padding:9px 10px;text-align:right;">${actionBtn}</td>
         </tr>`;
       }).join('');
       tableEl.innerHTML = `
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px;">
+          <button type="button" id="uploadFailBulkBtn" onclick="window.uploadFailBulkResolve()" disabled
+            style="padding:8px 16px;background:#d1d5db;color:#fff;border:none;border-radius:7px;font-size:13px;font-weight:700;cursor:not-allowed;">
+            ✅ 선택 항목 확인 완료 <span id="uploadFailSelCount">0</span>건
+          </button>
+          <span style="font-size:12px;color:#9ca3af;">미확인 ${unresolved}건 — 체크 후 한 번에 확인 완료할 수 있습니다</span>
+        </div>
         <table style="width:100%;border-collapse:collapse;background:#fff;border:1px solid #e5e7eb;border-radius:8px;overflow:hidden;">
           <thead><tr>
+            <th style="background:#f8fafc;padding:9px 10px;text-align:center;font-size:11px;font-weight:600;color:#6b7280;border-bottom:1px solid #e5e7eb;width:36px;"><input type="checkbox" id="uploadFailChkAll" onchange="window.uploadFailToggleAll(this)" style="width:16px;height:16px;cursor:pointer;"></th>
             <th style="background:#f8fafc;padding:9px 10px;text-align:left;font-size:11px;font-weight:600;color:#6b7280;border-bottom:1px solid #e5e7eb;">시각</th>
             <th style="background:#f8fafc;padding:9px 10px;text-align:left;font-size:11px;font-weight:600;color:#6b7280;border-bottom:1px solid #e5e7eb;">케이스</th>
             <th style="background:#f8fafc;padding:9px 10px;text-align:left;font-size:11px;font-weight:600;color:#6b7280;border-bottom:1px solid #e5e7eb;">파일명</th>
@@ -9578,6 +9599,47 @@
       showToast('미확인으로 되돌림', 'info');
       window.adminRenderUploadFailLog();
     } catch(e) { showToast('처리 실패: ' + (e.message || e), 'error'); }
+  };
+
+  // ───── 실패 로그 체크박스 일괄 처리 ─────
+  // 전체선택 토글
+  window.uploadFailToggleAll = function(headerChk) {
+    document.querySelectorAll('.uploadFailChk').forEach(cb => { cb.checked = headerChk.checked; });
+    window.uploadFailSyncHeader();
+  };
+  // 선택 개수 갱신 + 버튼 활성/비활성 + 헤더 체크 상태 맞춤
+  window.uploadFailSyncHeader = function() {
+    const all = Array.from(document.querySelectorAll('.uploadFailChk'));
+    const checked = all.filter(cb => cb.checked);
+    const cntEl = document.getElementById('uploadFailSelCount');
+    const btn = document.getElementById('uploadFailBulkBtn');
+    const headerChk = document.getElementById('uploadFailChkAll');
+    if (cntEl) cntEl.textContent = checked.length;
+    if (btn) {
+      const on = checked.length > 0;
+      btn.disabled = !on;
+      btn.style.background = on ? '#1D9E75' : '#d1d5db';
+      btn.style.cursor = on ? 'pointer' : 'not-allowed';
+    }
+    if (headerChk) headerChk.checked = all.length > 0 && checked.length === all.length;
+  };
+  // 선택 항목 일괄 확인완료
+  window.uploadFailBulkResolve = async function() {
+    const ids = Array.from(document.querySelectorAll('.uploadFailChk'))
+      .filter(cb => cb.checked).map(cb => cb.value);
+    if (ids.length === 0) return;
+    if (!confirm(`선택한 ${ids.length}건을 확인 완료 처리할까요?`)) return;
+    const btn = document.getElementById('uploadFailBulkBtn');
+    if (btn) { btn.disabled = true; btn.textContent = '처리 중...'; }
+    let done = 0;
+    for (const id of ids) {
+      try {
+        await updateDoc(doc(db, 'uploadFailLogs', id), { resolved: true, resolvedAt: serverTimestamp(), resolvedBy: window._currentUserId || '' });
+        done++;
+      } catch(e) { console.warn('확인완료 실패:', id, e); }
+    }
+    showToast(`✅ ${done}건 확인 완료 처리됨`, 'success');
+    window.adminRenderUploadFailLog();
   };
 
   // (v27) 미확인 카운트 배지 — 페이지 로드 후 + 5분마다 갱신
@@ -28526,16 +28588,25 @@
         // 성공한 파일은 메모리에 nasPath 반영 (다음 시도 때 건너뜀)
         try { if (typeof markAttachmentsUploaded === 'function') markAttachmentsUploaded(uploadResult.uploadedFiles); } catch(e) {}
         const failedFiles = uploadResult.uploadedFiles.filter(r => !r.success);
-        // 실패 로그 기록
+        // 실패 로그 기록 — (개선) 같은 케이스+파일은 재시도해도 한 건만 유지.
+        //   문서 ID를 케이스ID+파일명으로 고정(setDoc)해서, 재시도 시 새 줄이 쌓이지 않고
+        //   시각/재시도횟수만 갱신되도록 함. (기존 addDoc은 누를 때마다 새 문서 생성)
         try {
           for (const f of failedFiles) {
-            await addDoc(collection(db, 'uploadFailLogs'), {
+            const safeKey = ((caseId || 'NOID') + '__' + (f.autoName || 'NONAME'))
+              .replace(/[\/\\\s'"#?]+/g, '_').slice(0, 180);
+            const ref = doc(db, 'uploadFailLogs', safeKey);
+            let prevTries = 0;
+            try { const prev = await getDoc(ref); if (prev.exists()) prevTries = prev.data().retryCount || 0; } catch(e) {}
+            await setDoc(ref, {
               caseId: caseId || '(미발급)',
               uploader: NAS_USER || '(미확인)',
               fileName: f.autoName || '',
               errorType: 'upload_failed',
-              createdAt: serverTimestamp()
-            });
+              retryCount: prevTries + 1,
+              createdAt: serverTimestamp(),
+              resolved: false
+            }, { merge: true });
           }
         } catch(e) { console.warn('uploadFailLogs 저장 실패:', e); }
         // 모달 표시 — 사용자가 [재시도] 또는 [접수 취소] 선택
