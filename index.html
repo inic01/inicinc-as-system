@@ -5018,7 +5018,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v38';
+  const APP_VERSION = 'v39';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -25497,7 +25497,7 @@
   // ==================== NAS 파일 업로드 (v8 이식) ====================
   // 등록 버튼 클릭 시 호출. 모든 첨부파일을 NAS에 업로드.
   // 5-1 변경: defectAttachments[1~5] + normalAttachments 통합 (getAllAttachments)
-  // 업로드 폴더: /home/as_{NAS_USER}_photos/
+  // 업로드 폴더: /home/as_{NAS_USER}_photos/{회수품목|불량부품|정상작동}/  (v39 종류별 분류)
   // 반환: { ok: bool, uploadedFiles: [{autoName, success, nasPath}], message: string }
   async function uploadFilesToNAS() {
     const statusEl = document.getElementById('uploadStatus');
@@ -25525,16 +25525,39 @@
     const folderName = `as_${NAS_USER}_photos`;
     const basePath = `/home/${folderName}`;
 
-    // 폴더 생성 시도 (이미 있으면 무시됨)
-    try {
-      const createUrl = './api_proxy.php?endpoint=entry.cgi'
-                      + '&api=SYNO.FileStation.CreateFolder&version=2&method=create'
-                      + '&folder_path=' + encodeURIComponent('/home')
-                      + '&name=' + encodeURIComponent(folderName)
-                      + '&_sid=' + NAS_SID;
-      await fetch(createUrl);
-    } catch(e) {
-      console.warn('폴더 생성 실패 (이미 있을 수 있음):', e);
+    // (v39) 종류별 하위 폴더 분류
+    //   - 회수품목(recovery) → basePath/회수품목
+    //   - 불량부품(defect:N) → basePath/불량부품
+    //   - 정상작동(normal)   → basePath/정상작동
+    const SUBFOLDER_BY_SOURCE = (src) => {
+      if (src === 'recovery') return '회수품목';
+      if (src === 'normal')   return '정상작동';
+      return '불량부품'; // defect:1~5
+    };
+
+    // 폴더 생성 헬퍼 (이미 있으면 무시됨)
+    const ensureFolder = async (parentPath, name) => {
+      try {
+        const createUrl = './api_proxy.php?endpoint=entry.cgi'
+                        + '&api=SYNO.FileStation.CreateFolder&version=2&method=create'
+                        + '&folder_path=' + encodeURIComponent(parentPath)
+                        + '&name=' + encodeURIComponent(name)
+                        + '&_sid=' + NAS_SID;
+        await fetch(createUrl);
+      } catch(e) {
+        console.warn('폴더 생성 실패 (이미 있을 수 있음):', parentPath + '/' + name, e);
+      }
+    };
+
+    // 1) 베이스 폴더 생성
+    await ensureFolder('/home', folderName);
+    // 2) 이번 업로드에 실제로 필요한 하위 폴더만 생성
+    const neededSubs = new Set();
+    allAttachments.forEach(it => {
+      if (!it.nasPath && it.file) neededSubs.add(SUBFOLDER_BY_SOURCE(it.source));
+    });
+    for (const sub of neededSubs) {
+      await ensureFolder(basePath, sub);
     }
 
     // 파일 하나씩 업로드
@@ -25557,12 +25580,16 @@
 
       statusEl.textContent = `📤 NAS에 파일 업로드 중... (${i + 1}/${allAttachments.length}) ${item.autoName}`;
 
+      // (v39) 종류별 하위 폴더 경로 결정
+      const subFolder = SUBFOLDER_BY_SOURCE(item.source);
+      const uploadPath = `${basePath}/${subFolder}`;
+
       try {
         const formData = new FormData();
         formData.append('api', 'SYNO.FileStation.Upload');
         formData.append('version', '2');
         formData.append('method', 'upload');
-        formData.append('path', basePath);
+        formData.append('path', uploadPath);
         formData.append('create_parents', 'true');
         formData.append('overwrite', 'true');
         formData.append('_sid', NAS_SID);
@@ -25579,7 +25606,7 @@
           results.push({
             autoName: item.autoName,
             success: true,
-            nasPath: `${basePath}/${item.autoName}`
+            nasPath: `${uploadPath}/${item.autoName}`
           });
         } else {
           results.push({ autoName: item.autoName, success: false });
