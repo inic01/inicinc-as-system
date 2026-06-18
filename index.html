@@ -5018,7 +5018,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v39';
+  const APP_VERSION = 'v43';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -18132,6 +18132,10 @@
     } else if (c.type === '반품') {
       typeLabelHtml = '<span class="card-type-label type-return">반품</span>';
     }
+    // (A) 추가요청건 배지 — 일반 AS와 구분
+    if (c.isAddReq === true) {
+      typeLabelHtml += '<span class="card-type-label" style="background:#eef2ff;color:#3730a3;">➕ 추가요청</span>';
+    }
 
     // 액션 상태 라벨들 (배열) — 단계 이동의 흔적, X 버튼 없음
     const actionStatusList = Array.isArray(c.actionStatus) ? c.actionStatus : [];
@@ -19509,6 +19513,57 @@
 
     let buttons = [];
 
+    // (A) 추가요청건 전용 흐름 — 일반 AS 버튼 대신 전용 버튼만 노출
+    //     무상: 수리대기 →[완료(병합)]    유상: 수리대기 →[수리완료]→ 입금대기 →[입금완료(병합)]
+    if (c.isAddReq === true && (stage === '수리대기' || stage === '입금대기')) {
+      const paid = c.addReqPaid !== false;
+      if (stage === '수리대기') {
+        if (paid) {
+          buttons.push({
+            id: 'actAddReqRepairDone',
+            label: '✅ 수리완료 → 입금대기',
+            bg: '#1D9E75',
+            action: () => window.dashAddReqRepairDone(c)
+          });
+        } else {
+          buttons.push({
+            id: 'actAddReqMergeFree',
+            label: '✅ 완료 (원본 완료건에 부품 추가)',
+            bg: '#1D9E75',
+            action: () => window.dashAddReqMerge(c)
+          });
+        }
+      } else if (stage === '입금대기') {
+        buttons.push({
+          id: 'actAddReqDepositDone',
+          label: '✅ 입금완료 (원본 완료건에 부품 추가)',
+          bg: '#1D9E75',
+          action: () => window.dashAddReqMerge(c)
+        });
+      }
+      // 공통: 취소(접수 철회) — 임시 케이스 삭제
+      buttons.push({
+        id: 'actAddReqCancel',
+        label: '🗑️ 추가요청 취소 (삭제)',
+        bg: '#6b7280',
+        action: () => window.dashAddReqCancel(c)
+      });
+      // 전용 버튼만 렌더하고 일반 흐름 건너뜀 (기존 인라인 방식과 동일)
+      btnsEl.innerHTML = buttons.map(b => `
+        <button type="button" id="${b.id}" style="width:100%;padding:14px 16px;background:${b.bg};color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:700;cursor:pointer;font-family:inherit;transition:filter 0.15s;" onmouseover="this.style.filter='brightness(1.08)'" onmouseout="this.style.filter=''">
+          ${b.label}
+        </button>
+      `).join('');
+      buttons.forEach(b => {
+        if (!b.action) return;
+        const el = document.getElementById(b.id);
+        if (el) el.addEventListener('click', b.action);
+      });
+      if (noteWrapEl) noteWrapEl.style.display = 'none';
+      renderDeleteButton(c);
+      return;
+    }
+
     if (stage === '수리대기') {
       // 이 수리대기로 "마지막에" 들어온 경로 확인 — 재검수요청으로 왔으면 답변 대기, 입금완료로 왔으면 정상 수리
       const toRepairEntries = (c.statusHistory || []).filter(h => h.toStage === '수리대기');
@@ -19637,9 +19692,12 @@
     } else if (stage === '해피콜대기') {
       if (isPaid) {
         // (로드맵) 유상: 해피콜완료=비용 안내 완료 → 입금대기
+        // (A-2) 추가입금 안내 케이스면 라벨을 명확히 — 해피콜팀이 추가입금 건임을 인지
         buttons.push({
           id: 'actPaidHappycallDone',
-          label: '✅ 해피콜완료 (유상 안내) → 입금대기',
+          label: c.extraPaymentRequested
+            ? '✅ 추가입금 안내 완료 → 입금대기'
+            : '✅ 해피콜완료 (유상 안내) → 입금대기',
           bg: '#1D9E75',
           action: () => dashActionPaidHappycallToDeposit(c)
         });
@@ -23867,10 +23925,10 @@
             <h2 style="margin:0;font-size:22px;font-weight:600;">📦 완료 접수내역</h2>
             <div style="font-size:12px;color:#9ca3af;margin-top:2px;">전산입력 + 부품업로드 둘 다 완료된 케이스 (대시보드 해피콜완료에서 자동 제거됨)</div>
           </div>
-          ${isMaster ? `
+          ${(isMaster || ['partlead','teamlead','grouplead'].includes(role)) ? `
             <div style="display:flex;gap:8px;">
               <button type="button" id="completedDownloadBtn" onclick="window.completedDownloadExcel()" style="padding:10px 16px;background:#1D9E75;color:#fff;border:none;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">📥 엑셀 다운로드</button>
-              <button type="button" id="completedDeleteBtn" style="padding:10px 16px;background:#fff;color:#dc2626;border:1px solid #fca5a5;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">🗑️ 기간 지정 삭제</button>
+              ${isMaster ? `<button type="button" id="completedDeleteBtn" style="padding:10px 16px;background:#fff;color:#dc2626;border:1px solid #fca5a5;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;">🗑️ 기간 지정 삭제</button>` : ''}
             </div>
           ` : ''}
         </div>
@@ -24098,6 +24156,7 @@
           <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">
             <span style="background:${typeBg};color:${typeColor};padding:3px 10px;border-radius:99px;font-size:11px;font-weight:700;">${typeLabel}</span>
             <span style="font-weight:600;font-size:13px;color:#6b7280;">${escapeHtml(c.id)}</span>
+            ${c.isAddReq ? `<span style="background:#eef2ff;color:#3730a3;padding:2px 8px;border-radius:6px;font-size:10px;font-weight:700;">➕ 추가요청</span>` : ''}
             <span style="display:inline-flex;align-items:center;gap:3px;background:#E1F5EE;color:#085041;padding:2px 7px;border-radius:6px;font-size:10px;font-weight:700;">✓ 전산</span>
             ${isAS ? `<span style="display:inline-flex;align-items:center;gap:3px;background:#E1F5EE;color:#085041;padding:2px 7px;border-radius:6px;font-size:10px;font-weight:700;">✓ 부품업로드</span>` : ''}
           </div>
@@ -24115,6 +24174,9 @@
           <div style="font-weight:600;color:#374151;">${escapeHtml(completedTime || '')}</div>
           <div style="font-size:10px;">완료일시</div>
         </div>
+        ${(window._currentUserRole === 'happycall' || window._currentUserTeam === '해피콜팀') && isAS ? `
+          <button type="button" onclick="event.stopPropagation(); window.dashStartAddRequest('${escapeHtml(docId)}')" style="flex-shrink:0;padding:8px 12px;background:#4f46e5;color:#fff;border:none;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap;">➕ 추가요청건 접수</button>
+        ` : ''}
         <div style="flex-shrink:0;color:#9ca3af;font-size:18px;">›</div>
       </div>
     `;
@@ -24664,6 +24726,355 @@
 
   // 액션: 수리 정보 수정 (AS 폼 불러오기)
   // mode: 'paid' (유상 - 추가입금 안내) | 'free' (무상 - 재검수 추가 점검)
+  // (A) 추가요청건 접수 — 완료된 케이스에서 새 독립 케이스 생성 모드로 진입
+  //     기존 AS 접수폼을 'addreq' 모드로 재사용. 고객·제품·시리얼은 원본에서 불러오고 잠금.
+  window.dashStartAddRequest = function(docId) {
+    // 완료 케이스 데이터 찾기 (완료 목록 우선, 없으면 활성 캐시)
+    let c = null;
+    if (Array.isArray(window._completedListData)) {
+      c = window._completedListData.find(x => (x._docId === docId) || (x.id === docId));
+    }
+    if (!c && Array.isArray(window.dashAllCases)) {
+      c = window.dashAllCases.find(x => (x._docId === docId) || (x.id === docId));
+    }
+    if (!c) { showToast('원본 케이스를 찾을 수 없습니다', 'error'); return; }
+    if (c.type !== 'AS') { showToast('AS 케이스만 추가요청 접수가 가능합니다', 'error'); return; }
+
+    // 원본 참조 — 새 케이스에 심을 정보 (순번 그룹 묶기용)
+    window._addReqOrigin = {
+      originId: c.id,
+      originDocId: c._docId || c.id,
+      // 동일 고객 그룹키 — ERP 정렬에서 원본과 함께 묶이도록
+      groupKey: ((c.customer && c.customer.phone) || '') + '||' + ((c.product && c.product.serial) || ''),
+    };
+
+    // 신규 접수 모드 진입 (수정 모드 아님 — 새 케이스 생성)
+    window._editModeCaseId = null;
+    window._editModeDocId = null;
+    window._editModeType = null;
+    window._addReqMode = true;        // (A) 추가요청 모드 플래그
+    window._addReqCostPaid = true;    // 기본 유상 가정 (인계서)
+
+    if (typeof window.dashShowMenu === 'function') window.dashShowMenu('form');
+
+    setTimeout(() => {
+      if (typeof window.resetForm === 'function') window.resetForm();
+      setTimeout(() => {
+        // 기존 채우기 로직 재사용 (고객/제품/시리얼 등)
+        if (typeof dashFillFormFromCase === 'function') dashFillFormFromCase(c);
+        dashShowAddRequestBanner(c);
+        // 고객·제품·시리얼 잠금
+        ['custName','custPhone','serialNumber','intakeDate','productName'].forEach(id => {
+          const el = document.getElementById(id);
+          if (el) el.disabled = true;
+        });
+        // 제품군 탭 잠금 (클릭 막기)
+        document.querySelectorAll('#formWrap .category-tabs .toggle-btn').forEach(b => {
+          b.style.pointerEvents = 'none'; b.style.opacity = b.classList.contains('active') ? '1' : '0.45';
+        });
+        window.scrollTo(0, 0);
+      }, 200);
+    }, 100);
+  };
+
+  // (A) 추가요청 모드 배너 — 비용 토글 + 흐름 미리보기
+  function dashShowAddRequestBanner(c) {
+    let bannerEl = document.getElementById('dashEditModeBanner');
+    if (!bannerEl) {
+      bannerEl = document.createElement('div');
+      bannerEl.id = 'dashEditModeBanner';
+      const formWrap = document.getElementById('formWrap') || document.querySelector('.form-wrap');
+      if (formWrap) formWrap.insertBefore(bannerEl, formWrap.firstChild);
+    }
+    bannerEl.style.cssText = 'background:#eef2ff;color:#3730a3;padding:14px 18px;border:1.5px solid #6366f1;border-radius:10px;margin:16px 0;font-size:13px;line-height:1.6;';
+    const paid = window._addReqCostPaid !== false;
+    bannerEl.innerHTML = `
+      <div style="font-weight:700;margin-bottom:6px;font-size:14px;">➕ ${escapeHtml(c.id)} — 추가요청건 접수 (신규 케이스 생성)</div>
+      <div style="font-size:12px;">
+        완료된 고객의 추가 요청을 <b>새 독립 케이스</b>로 접수합니다. 고객정보·제품·시리얼은 원본에서 불러왔습니다(수정 불가).
+        <br>🔗 원본과 동일 고객 → ERP에서 같은 순번 그룹으로 묶입니다. · 📊 추가요청건은 실적 카운팅에서 제외됩니다.
+      </div>
+      <div style="border-top:1px dashed #6366f1;margin:12px 0;"></div>
+      <label style="display:block;font-weight:700;margin-bottom:8px;color:#3730a3;">💰 비용 발생 여부 <span style="color:#ef4444;">*</span></label>
+      <div style="display:flex;gap:8px;">
+        <button type="button" onclick="window.dashAddReqSetCost(true)" id="addReqPaidBtn" style="flex:1;padding:11px;border:2px solid ${paid?'#ef4444':'#e5e7eb'};background:${paid?'#fef2f2':'#fff'};border-radius:9px;cursor:pointer;font-family:inherit;">
+          <div style="font-size:13px;font-weight:700;color:${paid?'#b91c1c':'#6b7280'};">💳 비용 발생 (유상)</div>
+          <div style="font-size:10px;color:#9ca3af;margin-top:2px;">수리대기 → 입금대기 → 완료</div>
+        </button>
+        <button type="button" onclick="window.dashAddReqSetCost(false)" id="addReqFreeBtn" style="flex:1;padding:11px;border:2px solid ${!paid?'#1D9E75':'#e5e7eb'};background:${!paid?'#ecfdf5':'#fff'};border-radius:9px;cursor:pointer;font-family:inherit;">
+          <div style="font-size:13px;font-weight:700;color:${!paid?'#047857':'#6b7280'};">✅ 비용 없음 (무상)</div>
+          <div style="font-size:10px;color:#9ca3af;margin-top:2px;">수리대기 → 완료</div>
+        </button>
+      </div>
+      <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
+        <button type="button" onclick="dashCancelEditMode()" style="padding:8px 14px;background:#fff;border:1px solid #6366f1;color:#3730a3;border-radius:6px;font-size:12px;cursor:pointer;font-weight:600;font-family:inherit;">✕ 취소</button>
+        <button type="button" onclick="window.dashSubmitAddRequest()" style="flex:1;min-width:200px;padding:10px 14px;background:#4f46e5;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer;font-weight:700;font-family:inherit;" id="addReqSubmitBtn">
+          ➕ 추가요청건 접수 → 수리대기
+        </button>
+      </div>
+    `;
+    bannerEl.style.display = '';
+    const submitBtn = document.getElementById('submitBtn');
+    if (submitBtn) submitBtn.style.display = 'none';
+    const draftBtn = document.getElementById('draftSaveBtn');
+    if (draftBtn) draftBtn.style.display = 'none';
+  }
+
+  window.dashAddReqSetCost = function(paid) {
+    window._addReqCostPaid = !!paid;
+    const c = { id: window._addReqOrigin ? window._addReqOrigin.originId : '' };
+    dashShowAddRequestBanner(c);
+  };
+
+  // (A) 추가요청건 제출 — 새 독립 케이스 생성
+  window.dashSubmitAddRequest = async function() {
+    if (window.blockIfOutdated && window.blockIfOutdated()) return;
+    if (!window._addReqMode || !window._addReqOrigin) {
+      showToast('추가요청 모드 정보가 없습니다', 'error');
+      return;
+    }
+    const origin = window._addReqOrigin;
+    const paid = window._addReqCostPaid !== false;
+
+    // 입력값 수집 (잠금 필드는 disabled여도 .value는 읽힘)
+    const custName = (document.getElementById('custName').value || '').trim();
+    const custPhone = (document.getElementById('custPhone').value || '').trim();
+    const category = (document.getElementById('productCategory').value || '');
+    const productName = (document.getElementById('productName').value || '');
+    const serialNumber = (document.getElementById('serialNumber').value || '').trim();
+    const intakeDate = (document.getElementById('intakeDate').value || '');
+    const treatmentContent = (document.getElementById('treatmentContent').value || '').trim();
+    const notesContent = (document.getElementById('notesContent').value || '').trim();
+
+    // 사용부품 필수 (추가요청은 작업분 부품이 있어야 ERP 업로드 의미가 있음)
+    if (!selectedParts || selectedParts.length === 0) {
+      showToast('사용부품을 1개 이상 추가하세요', 'error');
+      return;
+    }
+
+    const submitBtnEl = document.getElementById('addReqSubmitBtn');
+    if (submitBtnEl) { submitBtnEl.disabled = true; submitBtnEl.textContent = '접수 중...'; }
+
+    try {
+      // NAS 업로드 (첨부 있으면)
+      let uploadMap = {};
+      try {
+        const uploadResult = await uploadFilesToNAS();
+        (uploadResult.uploadedFiles || []).forEach(r => { uploadMap[r.autoName] = r; });
+      } catch(e) { console.warn('추가요청 첨부 업로드 실패(계속 진행):', e); }
+
+      // 새 케이스 ID 발급 (기존 접수 규칙 그대로)
+      const gen = await generateCaseId();
+      const caseId = gen.id;
+      const datePart = gen.datePart;
+      const seq = gen.seq;
+
+      // (A) 흐름: 유상 = 수리대기 → 입금대기 → 완료 / 무상 = 수리대기 → 완료
+      //     type은 'AS'로 두고 isAddReq 플래그로 구분 → 기존 AS 대시보드 흐름·버튼을 그대로 재사용.
+      //     (새 type을 만들면 곳곳의 type 분기에 안 잡혀 카드/버튼이 누락될 위험)
+      const stage = '수리대기';
+
+      const caseData = {
+        id: caseId,
+        type: 'AS',                       // 기존 AS 흐름 재사용
+        isAddReq: true,                   // (A) 추가요청건 구분 플래그
+        stage,
+        actionStatus: [],
+        statusByHappycall: '',
+        statusByEngineer: '',
+        repairType: paid ? '유상' : '무상',
+        addReqPaid: paid,                 // (A) 비용 발생 여부
+        // (A) 원본 참조 — 순번 그룹 묶기 + 추적
+        addReqOriginId: origin.originId,
+        addReqOriginDocId: origin.originDocId,
+        addReqGroupKey: origin.groupKey,
+        // (A) 실적 카운팅 제외 플래그
+        excludeFromCount: true,
+        customer: { name: custName, phone: custPhone },
+        product: { category, name: productName, serial: serialNumber || '', recovery: [] },
+        defect: { name1:'', part1:'', name2:'', part2:'', name3:'', part3:'', name4:'', part4:'', name5:'', part5:'', list: [] },
+        treatmentContent: treatmentContent || '',
+        notes: notesContent || '',
+        partsUsed: selectedParts.map(p => ({ code: p.code, name: p.name, price: p.price, qty: p.qty, amount: p.price * p.qty })),
+        partsTotal: selectedParts.reduce((s, p) => s + p.price * p.qty, 0),
+        packaging: selectedPackaging.slice(),
+        packagingDetails: selectedPackaging.map(name => {
+          const found = (window._adminPackaging || []).find(p => p.name === name);
+          if (!found) return { name, code: '', price: 0, qty: 1, amount: 0, type: '' };
+          const price = Number(found.price || 0);
+          const qty = currentPkgQty(name);
+          return { name, code: found.code || '', price, qty, amount: price * qty, type: found.type || '' };
+        }),
+        packagingTotal: selectedPackaging.reduce((s, name) => {
+          const found = (window._adminPackaging || []).find(p => p.name === name);
+          if (!found) return s;
+          return s + Number(found.price || 0) * currentPkgQty(name);
+        }, 0),
+        attachments: getAllAttachments().map(f => {
+          const r = uploadMap[f.autoName];
+          return { originalName: f.originalName, autoName: f.autoName, size: f.size, type: f.type,
+                   source: f.source, defectNum: f.defectNum,
+                   uploaded: !!(r && r.success), nasPath: (r && r.success) ? r.nasPath : '', shareUrl: '' };
+        }),
+        attachmentCount: getAllAttachments().length,
+        engineer: origin && origin.originId ? '' : (NAS_USER || ''),  // 엔지니어는 수리대기에서 배정/처리
+        happycallStaff: NAS_USER || '',   // 접수한 해피콜 직원
+        erpProcessed: false,
+        erpProcessedBy: '',
+        intakeDate: intakeDate || '',
+        createdDate: datePart,
+        dailySeq: seq,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        confirmReason: '',
+        memo: '',
+        _isDraft: false,
+        statusHistory: [{
+          changedAt: new Date().toISOString(),
+          changedBy: NAS_USER || '해피콜',
+          role: 'happycall',
+          fromStage: '',
+          toStage: stage,
+          note: `[추가요청 접수] 원본 ${origin.originId} · ${paid ? '유상(입금대기 경유)' : '무상'}`,
+          action: '추가요청접수',
+        }],
+      };
+
+      await setDoc(doc(db, 'cases', caseId), caseData);
+
+      showToast(`추가요청건 접수 완료 → 수리대기 (${caseId})`, 'success');
+
+      // 정리
+      window._addReqMode = false;
+      window._addReqOrigin = null;
+      window._addReqCostPaid = true;
+      const bannerEl = document.getElementById('dashEditModeBanner');
+      if (bannerEl) bannerEl.style.display = 'none';
+      const sb = document.getElementById('submitBtn');
+      if (sb) sb.style.display = '';
+      const db2 = document.getElementById('draftSaveBtn');
+      if (db2) db2.style.display = '';
+      if (typeof window.resetForm === 'function') window.resetForm();
+      if (typeof window.dashShowMenu === 'function') window.dashShowMenu('dashboard');
+
+    } catch(e) {
+      console.error('추가요청 접수 실패:', e);
+      showToast('추가요청 접수 실패: ' + (e.message || e), 'error');
+      if (submitBtnEl) { submitBtnEl.disabled = false; submitBtnEl.textContent = '➕ 추가요청건 접수 → 수리대기'; }
+    }
+  };
+
+  // (A) 추가요청 — 유상: 수리완료 → 입금대기
+  window.dashAddReqRepairDone = async function(c) {
+    try {
+      const histEntry = {
+        changedAt: new Date().toISOString(),
+        changedBy: NAS_USER || '엔지니어',
+        role: 'engineer',
+        fromStage: c.stage || '수리대기',
+        toStage: '입금대기',
+        note: '[추가요청] 수리완료 → 입금대기',
+        action: '수리완료',
+      };
+      await setDoc(doc(db, 'cases', (c._docId || c.id)), {
+        stage: '입금대기',
+        statusUpdatedAt: serverTimestamp(),
+        statusUpdatedBy: NAS_USER || '엔지니어',
+        updatedAt: serverTimestamp(),
+        statusHistory: [...(c.statusHistory || []), histEntry],
+      }, { merge: true });
+      showToast('추가요청 수리완료 → 입금대기', 'success');
+      if (typeof dashCloseModal === 'function') dashCloseModal();
+    } catch(e) {
+      console.error('추가요청 수리완료 실패:', e);
+      showToast('처리 실패: ' + (e.message || e), 'error');
+    }
+  };
+
+  // (A) 추가요청 취소 — 임시 케이스 삭제 (원본은 그대로)
+  window.dashAddReqCancel = async function(c) {
+    if (!confirm('이 추가요청 접수를 취소(삭제)할까요?\n원본 완료건은 변경되지 않습니다.')) return;
+    try {
+      await deleteDoc(doc(db, 'cases', (c._docId || c.id)));
+      showToast('추가요청 접수가 취소되었습니다', 'success');
+      if (typeof dashCloseModal === 'function') dashCloseModal();
+    } catch(e) {
+      console.error('추가요청 취소 실패:', e);
+      showToast('취소 실패: ' + (e.message || e), 'error');
+    }
+  };
+
+  // (A) 추가요청 병합 — 원본 완료건에 부품 추가 + ERP 사용부품 추가 후 임시 케이스 삭제
+  //     무상: 수리대기에서 완료 시 / 유상: 입금대기에서 입금완료 시 호출
+  window.dashAddReqMerge = async function(c) {
+    const paid = c.addReqPaid !== false;
+    const msg = paid
+      ? '입금완료 처리하고, 추가 부품을 원본 완료건에 합칠까요?'
+      : '완료 처리하고, 추가 부품을 원본 완료건에 합칠까요?';
+    if (!confirm(msg + '\n\n※ 이 추가요청 케이스는 사라지고, 원본 완료건에 사용부품이 추가됩니다.')) return;
+
+    const originDocId = c.addReqOriginDocId || c.addReqOriginId;
+    if (!originDocId) { showToast('원본 케이스 정보가 없습니다', 'error'); return; }
+
+    try {
+      // 1) 원본 완료 케이스 로드 (최신 상태)
+      const originRef = doc(db, 'cases', originDocId);
+      const originSnap = await getDoc(originRef);
+      if (!originSnap.exists()) { showToast('원본 완료건을 찾을 수 없습니다', 'error'); return; }
+      const origin = { ...originSnap.data(), _docId: originSnap.id };
+
+      // 2) 추가요청 부품을 원본 partsUsed에 병합
+      const addParts = Array.isArray(c.partsUsed) ? c.partsUsed : [];
+      if (addParts.length === 0) { showToast('추가할 사용부품이 없습니다', 'error'); return; }
+      const mergedPartsUsed = [...(Array.isArray(origin.partsUsed) ? origin.partsUsed : []), ...addParts];
+      const mergedPartsTotal = mergedPartsUsed.reduce((s, p) => s + (Number(p.price) || 0) * (Number(p.qty) || 0), 0);
+
+      // 3) ERP 사용부품 행 — 추가 부품분만 새 행으로 만들어 원본 erpPartsRows에 append
+      //    (추가 부품 행에는 원본 담당자/고객 정보가 들어가도록, 임시 케이스에 원본 정보를 얹어 빌드)
+      const addReqForRows = {
+        ...c,
+        id: origin.id,                       // 원본 케이스 ID로 추적 (순번 동일 그룹)
+        engineer: origin.engineer || c.engineer || '',
+        customer: origin.customer || c.customer || {},
+        partsUsed: addParts,                 // 추가분만
+        packaging: [], packagingDetails: [], packagingMaterials: [],  // 포장재는 원본 유지, 중복 방지
+      };
+      const addRows = (typeof dashBuildErpPartsRows === 'function') ? dashBuildErpPartsRows(addReqForRows) : [];
+      const mergedErpRows = [...(Array.isArray(origin.erpPartsRows) ? origin.erpPartsRows : []), ...addRows];
+
+      // 4) 원본 케이스 갱신 — 부품 병합 + ERP 재업로드 대기로 전환
+      const originHist = Array.isArray(origin.statusHistory) ? origin.statusHistory : [];
+      const mergeHist = {
+        changedAt: new Date().toISOString(),
+        changedBy: NAS_USER || '엔지니어',
+        role: 'engineer',
+        fromStage: origin.stage || '해피콜완료',
+        toStage: origin.stage || '해피콜완료',
+        note: `[추가요청 병합] ${c.id} 의 사용부품 ${addParts.length}건을 추가 (${paid ? '유상' : '무상'})`,
+        action: '추가요청병합',
+      };
+      await setDoc(originRef, {
+        partsUsed: mergedPartsUsed,
+        partsTotal: mergedPartsTotal,
+        erpPartsRows: mergedErpRows,
+        erpPartsUploaded: false,          // 추가분 다시 업로드해야 하므로 대기로
+        erpPartsReadyForUpload: true,
+        addReqMergedIds: [...(Array.isArray(origin.addReqMergedIds) ? origin.addReqMergedIds : []), c.id],
+        updatedAt: serverTimestamp(),
+        statusHistory: [...originHist, mergeHist],
+      }, { merge: true });
+
+      // 5) 병합 성공 후에만 임시 케이스 삭제 (데이터 보호 — 순서 중요)
+      await deleteDoc(doc(db, 'cases', (c._docId || c.id)));
+
+      showToast(`원본 완료건(${origin.id})에 부품 ${addParts.length}건 추가 · ERP 재업로드 대기`, 'success');
+      if (typeof dashCloseModal === 'function') dashCloseModal();
+    } catch(e) {
+      console.error('추가요청 병합 실패:', e);
+      showToast('병합 실패 — 추가요청 케이스는 삭제되지 않았습니다: ' + (e.message || e), 'error');
+    }
+  };
+
   function dashActionEnterEditMode(c, mode) {
     // 1) 케이스 ID + 수정 모드 저장 (전역)
     window._editModeCaseId = c.id;
@@ -24882,7 +25293,7 @@
       <div style="font-size:12px;font-weight:500;">
         기존 데이터를 수정 중입니다 (신규 접수 아님). ${isExchangeReturn ? '불량명/사용부품을 확인·수정한 후 저장하세요.' : '추가 부품/불량을 추가한 후 하단 버튼을 누르세요.'}
         ${isPaid ? `
-        <br><b>"💰 추가입금 안내 → 입금대기"</b>` : `
+        <br><b>"💰 추가입금 안내 → 해피콜대기"</b> (해피콜팀이 고객 안내 후 입금대기로 넘깁니다)` : `
         <br>· <b>부품 교체</b>(무상)면 → <b>"✅ 수리완료 → 해피콜대기로 이동"</b>
         <br>· <b>고객이 구성품 구매·비용이 발생</b>하면 → <b>"💳 수리완료 → 입금대기로 이동"</b>`}
       </div>
@@ -24919,7 +25330,7 @@
         </button>
         ` : isPaid ? `
         <button type="button" onclick="dashSubmitEditMode()" style="flex:1;padding:10px 14px;background:#ef4444;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer;font-weight:700;font-family:inherit;">
-          💰 추가입금 안내 → 입금대기로 이동
+          💰 추가입금 안내 → 해피콜대기로 이동
         </button>
         ` : `
         <button type="button" onclick="dashSubmitEditMode('해피콜대기')" style="flex:1;min-width:200px;padding:10px 14px;background:#3b82f6;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer;font-weight:700;font-family:inherit;">
@@ -24944,6 +25355,21 @@
     window._editModeCaseId = null;
     window._editModeDocId = null;
     window._editModeType = null;
+    // (A) 추가요청 모드 정리 + 잠금 해제
+    if (window._addReqMode) {
+      window._addReqMode = false;
+      window._addReqOrigin = null;
+      window._addReqCostPaid = true;
+      ['custName','custPhone','serialNumber','intakeDate','productName'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.disabled = false;
+      });
+      document.querySelectorAll('#formWrap .category-tabs .toggle-btn').forEach(b => {
+        b.style.pointerEvents = ''; b.style.opacity = '';
+      });
+      const draftBtn = document.getElementById('draftSaveBtn');
+      if (draftBtn) draftBtn.style.display = '';
+    }
     const bannerEl = document.getElementById('dashEditModeBanner');
     if (bannerEl) bannerEl.style.display = 'none';
     const submitBtn = document.getElementById('submitBtn');
@@ -25037,7 +25463,9 @@
     const formData = collectFormData();
     const isPaid = mode === 'paid';
     const isExchangeReturn = (mode === 'return' || mode === 'exchange');
-    const newStage = toStage || (isExchangeReturn ? '처리대기' : isPaid ? '입금대기' : '해피콜대기');
+    // (A-2) 추가입금(유상)은 곧장 입금대기로 가지 않고 해피콜대기를 먼저 거침.
+    //       해피콜팀이 추가입금 건을 인지·고객 안내 후 입금대기로 넘기도록.
+    const newStage = toStage || (isExchangeReturn ? '처리대기' : isPaid ? '해피콜대기' : '해피콜대기');
     const freeToDeposit = (!isPaid && !isExchangeReturn && newStage === '입금대기');
 
     // (v21) 무상 모드 — 재검수 답변 미리 추출
@@ -25494,10 +25922,57 @@
     showToast('로그아웃되었습니다', 'success');
   };
 
+  // ==================== NAS 폴더 헬퍼 (v41 _Conflict 방지 + v42 소문자화) ====================
+  // (v42) 폴더명용 아이디는 항상 소문자로 통일 — 로그인 입력 대소문자가 달라도 폴더 하나로만 감.
+  //       NAS_USER 자체는 안 바꿈(statusUpdatedBy/uploader 등 기존 기록 매칭 보호). 폴더명에만 적용.
+  function nasFolderUserId() {
+    return String(NAS_USER || '').toLowerCase();
+  }
+  // (v41) 세션 내 폴더 존재 캐시 — 같은 경로 반복 List/Create 방지
+  window._nasFolderCache = window._nasFolderCache || {};
+  // (v41) 폴더 존재 여부 확인 — List로 먼저 확인
+  async function nasFolderExists(parentPath, name) {
+    const key = parentPath + '/' + name;
+    if (window._nasFolderCache[key]) return true;
+    try {
+      const listUrl = './api_proxy.php?endpoint=entry.cgi'
+                    + '&api=SYNO.FileStation.List&version=2&method=list'
+                    + '&folder_path=' + encodeURIComponent(parentPath)
+                    + '&_sid=' + NAS_SID;
+      const resp = await fetch(listUrl);
+      const data = await resp.json();
+      const items = (data && data.data && data.data.files) ? data.data.files : [];
+      const found = items.some(f => f.isdir && f.name === name);
+      if (found) window._nasFolderCache[key] = true;
+      return found;
+    } catch(e) {
+      console.warn('폴더 존재 확인 실패:', parentPath + '/' + name, e);
+      return false; // 확인 실패 시 생성 시도하도록 false
+    }
+  }
+  // (v41) 폴더가 없을 때만 생성 — 이미 있으면 CreateFolder 호출 안 함(_Conflict 방지)
+  async function nasEnsureFolder(parentPath, name) {
+    const key = parentPath + '/' + name;
+    if (window._nasFolderCache[key]) return;
+    const exists = await nasFolderExists(parentPath, name);
+    if (exists) return;
+    try {
+      const createUrl = './api_proxy.php?endpoint=entry.cgi'
+                      + '&api=SYNO.FileStation.CreateFolder&version=2&method=create'
+                      + '&folder_path=' + encodeURIComponent(parentPath)
+                      + '&name=' + encodeURIComponent(name)
+                      + '&_sid=' + NAS_SID;
+      await fetch(createUrl);
+      window._nasFolderCache[key] = true;
+    } catch(e) {
+      console.warn('폴더 생성 실패:', parentPath + '/' + name, e);
+    }
+  }
+
   // ==================== NAS 파일 업로드 (v8 이식) ====================
   // 등록 버튼 클릭 시 호출. 모든 첨부파일을 NAS에 업로드.
   // 5-1 변경: defectAttachments[1~5] + normalAttachments 통합 (getAllAttachments)
-  // 업로드 폴더: /home/as_{NAS_USER}_photos/{회수품목|불량부품|정상작동}/  (v39 종류별 분류)
+  // 업로드 폴더: /home/as_{NAS_USER소문자}_photos/{회수품목|불량부품|정상작동}/  (v39 분류 + v42 소문자)
   // 반환: { ok: bool, uploadedFiles: [{autoName, success, nasPath}], message: string }
   async function uploadFilesToNAS() {
     const statusEl = document.getElementById('uploadStatus');
@@ -25521,8 +25996,8 @@
     statusEl.classList.add('show', 'uploading');
     statusEl.textContent = `📤 NAS에 파일 업로드 중... (0/${allAttachments.length})`;
 
-    // 업로드 폴더: 개인 홈 폴더 내 as_{USER}_photos
-    const folderName = `as_${NAS_USER}_photos`;
+    // 업로드 폴더: 개인 홈 폴더 내 as_{USER소문자}_photos  (v42 소문자화)
+    const folderName = `as_${nasFolderUserId()}_photos`;
     const basePath = `/home/${folderName}`;
 
     // (v39) 종류별 하위 폴더 분류
@@ -25535,29 +26010,15 @@
       return '불량부품'; // defect:1~5
     };
 
-    // 폴더 생성 헬퍼 (이미 있으면 무시됨)
-    const ensureFolder = async (parentPath, name) => {
-      try {
-        const createUrl = './api_proxy.php?endpoint=entry.cgi'
-                        + '&api=SYNO.FileStation.CreateFolder&version=2&method=create'
-                        + '&folder_path=' + encodeURIComponent(parentPath)
-                        + '&name=' + encodeURIComponent(name)
-                        + '&_sid=' + NAS_SID;
-        await fetch(createUrl);
-      } catch(e) {
-        console.warn('폴더 생성 실패 (이미 있을 수 있음):', parentPath + '/' + name, e);
-      }
-    };
-
-    // 1) 베이스 폴더 생성
-    await ensureFolder('/home', folderName);
-    // 2) 이번 업로드에 실제로 필요한 하위 폴더만 생성
+    // (v41) 1) 베이스 폴더 — 없을 때만 생성 (_Conflict 방지)
+    await nasEnsureFolder('/home', folderName);
+    // 2) 이번 업로드에 실제로 필요한 하위 폴더만 — 없을 때만 생성
     const neededSubs = new Set();
     allAttachments.forEach(it => {
       if (!it.nasPath && it.file) neededSubs.add(SUBFOLDER_BY_SOURCE(it.source));
     });
     for (const sub of neededSubs) {
-      await ensureFolder(basePath, sub);
+      await nasEnsureFolder(basePath, sub);
     }
 
     // 파일 하나씩 업로드
@@ -30674,7 +31135,7 @@
     return all;
   }
 
-  // ERP 파일 NAS 업로드 (AS와 동일 폴더 사용)
+  // ERP 파일 NAS 업로드 (AS와 동일 폴더 사용, v42 소문자 + v41 _Conflict 방지 + 종류별 분류)
   async function uploadErpFilesToNAS() {
     const all = getAllErpAttachments();
     if (all.length === 0) return { ok: true, uploadedFiles: [] };
@@ -30682,26 +31143,36 @@
       // 마스터 모드 — 업로드 생략
       return { ok: true, uploadedFiles: [] };
     }
-    const folderName = `as_${NAS_USER}_photos`;
+    const folderName = `as_${nasFolderUserId()}_photos`;
     const basePath = `/home/${folderName}`;
-    try {
-      const createUrl = './api_proxy.php?endpoint=entry.cgi'
-                      + '&api=SYNO.FileStation.CreateFolder&version=2&method=create'
-                      + '&folder_path=' + encodeURIComponent('/home')
-                      + '&name=' + encodeURIComponent(folderName)
-                      + '&_sid=' + NAS_SID;
-      await fetch(createUrl);
-    } catch(e) {}
+
+    // (v39) 종류별 하위 폴더 분류 (ERP: defect / normal)
+    const SUBFOLDER_BY_SOURCE = (src) => {
+      if (src === 'recovery') return '회수품목';
+      if (src === 'normal')   return '정상작동';
+      return '불량부품'; // defect:N
+    };
+
+    // (v41) 베이스 폴더 — 없을 때만 생성
+    await nasEnsureFolder('/home', folderName);
+    // 필요한 하위 폴더만 — 없을 때만 생성
+    const neededSubs = new Set();
+    all.forEach(it => { if (it.file) neededSubs.add(SUBFOLDER_BY_SOURCE(it.source)); });
+    for (const sub of neededSubs) {
+      await nasEnsureFolder(basePath, sub);
+    }
 
     const results = [];
     for (let i = 0; i < all.length; i++) {
       const item = all[i];
+      const subFolder = SUBFOLDER_BY_SOURCE(item.source);
+      const uploadPath = `${basePath}/${subFolder}`;
       try {
         const formData = new FormData();
         formData.append('api', 'SYNO.FileStation.Upload');
         formData.append('version', '2');
         formData.append('method', 'upload');
-        formData.append('path', basePath);
+        formData.append('path', uploadPath);
         formData.append('create_parents', 'true');
         formData.append('overwrite', 'true');
         formData.append('_sid', NAS_SID);
@@ -30712,7 +31183,7 @@
         results.push({
           autoName: item.autoName,
           success: !!result.success,
-          nasPath: result.success ? `${basePath}/${item.autoName}` : ''
+          nasPath: result.success ? `${uploadPath}/${item.autoName}` : ''
         });
       } catch(e) {
         console.error('ERP 업로드 오류:', e);
@@ -31134,6 +31605,8 @@
         const r = d.data();
         // 보상판매·폐기로 빠진 케이스는 AS 카운트에서 제외 (실시간 차감)
         if (r.bosangSale === true || r.discardRequested === true) return;
+        // (A) 추가요청건은 실적 카운팅에서 제외
+        if (r.isAddReq === true || r.excludeFromCount === true) return;
         // 접수 시각 기준 (createdAt)
         let ts = null;
         if (r.createdAt && r.createdAt.toDate) ts = r.createdAt.toDate().getTime();
@@ -37463,6 +37936,22 @@
       // 라벨 변경
       const refreshLabel = document.getElementById('tsRefreshLabel');
       if (refreshLabel) refreshLabel.textContent = '🟢 실시간 반영';
+
+      // (v40) 1분 타이머 — 실시간 뷰 근무시간을 강제 갱신.
+      //   onSnapshot은 누가 상태를 바꿀 때만 트리거되므로, 변화가 없으면 근무시간이
+      //   멈춰 보임. 매 분 forceFresh로 다시 그려 근무 중 직원 시간이 늘어나게 함.
+      if (window._teamStatusState.rtMinuteTimer) clearInterval(window._teamStatusState.rtMinuteTimer);
+      window._teamStatusState.rtMinuteTimer = setInterval(() => {
+        const tsView2 = document.getElementById('dashViewTeamStatus');
+        if (!tsView2 || tsView2.style.display === 'none') {
+          clearInterval(window._teamStatusState.rtMinuteTimer);
+          window._teamStatusState.rtMinuteTimer = null;
+          return;
+        }
+        if ((window._teamStatusState.viewTab || 'realtime') === 'realtime' && typeof window.tsRenderRealtimeView === 'function') {
+          window.tsRenderRealtimeView({ forceFresh: true });
+        }
+      }, 60000);
     } catch (e) {
       console.warn('onSnapshot 실패, 30초 폴링으로 대체:', e);
       // 폴백: 30초 폴링
@@ -37661,7 +38150,31 @@
     if(!d) return; const open=d.style.display==='none'; d.style.display=open?'block':'none'; if(c) c.textContent=open?'▾':'▸';
   };
 
-  window.tsRenderRealtimeView = async function() {
+  // (v40) 팀현황 실시간 뷰 무거운 데이터 — 팀+날짜 키로 45초 캐시 + 병렬 로드
+  //   기존엔 tsRenderRealtimeView가 그려질 때마다 asComputeDaily·reportsCalcPending·
+  //   npLiveDoneToday·tsLoadRangeStats를 직렬로 재실행 → 팀 탭 전환/잦은 상태변경 때마다
+  //   cases 전체 재스캔 → 버벅임. 45초 캐시 + Promise.all 병렬로 완화.
+  window._tsRtHeavyCache = window._tsRtHeavyCache || {};
+  const TS_RT_CACHE_MS = 45000;
+  async function tsRtLoadHeavy(team, todayKey, dayStart, now, forceFresh) {
+    const key = (team || 'ALL') + '|' + todayKey;
+    const cached = window._tsRtHeavyCache[key];
+    if (!forceFresh && cached && (Date.now() - cached.ts) < TS_RT_CACHE_MS) {
+      return cached.data;
+    }
+    // 병렬 실행 — 4개 무거운 호출을 한 번에
+    const [ldR, npR, npDoneR, rstatsR] = await Promise.all([
+      window.asComputeDaily(team, todayKey).catch(e => { console.warn('asComputeDaily 실패', e); return { rows:[], totals:{ prevPending:0, intake:0, done:0, pending:0 } }; }),
+      window.reportsCalcPending(team).catch(e => { console.warn('reportsCalcPending 실패', e); return { rows:[] }; }),
+      window.npLiveDoneToday(team, todayKey).catch(e => { console.warn('npLiveDoneToday 실패', e); return 0; }),
+      tsLoadRangeStats(dayStart, now).catch(e => { console.warn('당일 팀원 실적 로드 실패', e); return {}; })
+    ]);
+    const data = { ld: ldR, npR: npR, npDone: npDoneR, rstats: rstatsR };
+    window._tsRtHeavyCache[key] = { ts: Date.now(), data };
+    return data;
+  }
+
+  window.tsRenderRealtimeView = async function(opts) {
     const wrap = document.getElementById('tsRealtimeWrap');
     if (!wrap) return;
     const team = tsRtTeam();
@@ -37687,12 +38200,23 @@
     // 2~3) AS는 AS 일별 입고와 동일 기준(asComputeDaily) · 새상품은 reportsCalcPending(npPending)
     const now = new Date();
     const todayKey = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}-${String(now.getDate()).padStart(2,'0')}`;
-    let ld = { rows:[], totals:{ prevPending:0, intake:0, done:0, pending:0 } };
-    try { ld = await window.asComputeDaily(team, todayKey); } catch(e){}
+    const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+
+    // (v40) 무거운 데이터는 45초 캐시 + 병렬 로드. forceFresh면 강제 갱신(1분 타이머).
+    const forceFresh = !!(opts && opts.forceFresh);
+    // 캐시 미스이면서 첫 진입이면 "불러오는 중" 잠깐 표시(멈춘 듯 안 보이게)
+    const _cacheKey = (team || 'ALL') + '|' + todayKey;
+    const _cached = window._tsRtHeavyCache[_cacheKey];
+    if (!forceFresh && !_cached) {
+      wrap.innerHTML = '<div style="padding:24px;text-align:center;color:#9ca3af;font-size:13px;">데이터 불러오는 중…</div>';
+    }
+    const heavy = await tsRtLoadHeavy(team, todayKey, dayStart, now, forceFresh);
+
+    const ld = heavy.ld;
     let asProducts = ld.rows.filter(r=>r.pending>0).map(r=>({ product:r.product, pending:r.pending })).sort((a,b)=>b.pending-a.pending);
     const asTotal = ld.totals.pending;
     let npProducts = [];
-    try { const r = await window.reportsCalcPending(team); npProducts = (r.rows||[]).filter(x=>x.npPending>0).map(x=>({product:x.product,pending:x.npPending})); } catch(e){}
+    try { npProducts = (heavy.npR.rows||[]).filter(x=>x.npPending>0).map(x=>({product:x.product,pending:x.npPending})); } catch(e){}
     npProducts.sort((a,b)=>b.pending-a.pending);
     const npTotal = npProducts.reduce((s,p)=>s+p.pending,0);
     const detRows = (arr)=> arr.length ? arr.map(p=>`<div style="display:flex;justify-content:space-between;padding:3px 0;border-bottom:1px solid #f4eecf;"><span>${escapeHtml(p.product)}</span><b>${p.pending}건</b></div>`).join('') : '<div style="color:#9ca3af;padding:4px 0;">없음</div>';
@@ -37709,15 +38233,12 @@
     // 처리율 — 실시간 업무현황 식: 처리량 ÷ (전일 미처리 + 금일 입고) × 100, 100% cap
     const denominator = prev + intake;
     const asRate = denominator > 0 ? Math.min(100, Math.round(done / denominator * 100)) : null;
-    // 당일 새상품 처리량(라이브) + 처리율 = 처리 ÷ (처리 + 현재 대기)
-    let npDone = 0;
-    try { npDone = await window.npLiveDoneToday(team, todayKey); } catch(e){}
+    // 당일 새상품 처리량(라이브) + 처리율 = 처리 ÷ (처리 + 현재 대기)  — (v40) 캐시 재사용
+    let npDone = heavy.npDone || 0;
     const npRate = (npDone + npTotal) > 0 ? Math.round(npDone / (npDone + npTotal) * 100) : null;
 
-    // 4) 당일 팀원 업무 실적 — tsLoadRangeStats(오늘)
-    const dayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    let rstats = {};
-    try { rstats = await tsLoadRangeStats(dayStart, now); } catch(e){ console.warn('당일 팀원 실적 로드 실패', e); }
+    // 4) 당일 팀원 업무 실적 — (v40) 캐시 재사용 (dayStart는 위에서 선언)
+    let rstats = heavy.rstats || {};
     // (v27) 비활성화 직원 제외 + 해피콜팀 제외
     const users = (window._teamStatusState.users || [])
       .filter(u => u.active !== false)
