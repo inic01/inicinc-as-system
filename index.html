@@ -4045,7 +4045,7 @@
       </div>
     </div>
 
-    <div class="card">
+    <div class="card" id="repairTypeCard">
       <div class="section-title">수리 유형<span class="required" style="color:var(--red);margin-left:4px">*</span></div>
       <div class="toggle-group repair-types">
         <div class="toggle-btn" data-value="무상" onclick="selectRepairType('무상')">무상</div>
@@ -5018,7 +5018,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v43';
+  const APP_VERSION = 'v44';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -19774,6 +19774,21 @@
       });
     }
 
+    // (A) 완료(해피콜완료) AS 케이스 상세 모달 — 해피콜 담당자(+마스터)는 추가요청건 접수 가능
+    //     마스터는 모든 역할 시점을 봐야 하므로 항상 포함.
+    if (stage === '해피콜완료' && c.type === 'AS' && c.isAddReq !== true) {
+      const _role = (typeof getCurrentUserRole === 'function') ? getCurrentUserRole() : (window._currentUserRole || '');
+      const _team = window._currentUserTeam || '';
+      if (_role === 'master' || _role === 'happycall' || _team === '해피콜팀') {
+        buttons.push({
+          id: 'actAddRequest',
+          label: '➕ 추가요청건 접수',
+          bg: '#4f46e5',
+          action: () => window.dashStartAddRequest(c._docId || c.id)
+        });
+      }
+    }
+
     if (buttons.length === 0) {
       btnsEl.innerHTML = '';
       if (noteWrapEl) noteWrapEl.style.display = 'none';
@@ -20144,9 +20159,16 @@
       if (isSimpleReturn) {
         // (v27) 택배비를 모두 숫자로 비교 — "0", "" 등 텍스트 값이 truthy로 잡혀
         //       0원인데 입금대기로 가던 버그 수정. 0이면 처리대기로.
-        const hasDeliveryFee = Number(c.deliveryFee || 0) > 0
-                            || Number(c.returnDeliveryFee || 0) > 0
-                            || Number(c.erpDeliveryFeeText || 0) > 0;
+        // (버그수정) erpDeliveryFeeText가 "6,000원"처럼 쉼표·단위 포함 문자열이면
+        //           Number()가 NaN → 0 처리되어 입금대기로 안 가던 문제. 숫자만 추출해 비교.
+        const parseFee = (v) => {
+          if (v == null) return 0;
+          const n = parseInt(String(v).replace(/[^0-9]/g, ''), 10);
+          return isNaN(n) ? 0 : n;
+        };
+        const hasDeliveryFee = parseFee(c.deliveryFee) > 0
+                            || parseFee(c.returnDeliveryFee) > 0
+                            || parseFee(c.erpDeliveryFeeText) > 0;
         if (hasDeliveryFee) {
           // 환불택배비 있으면 입금대기
           buttons.push({
@@ -24174,9 +24196,6 @@
           <div style="font-weight:600;color:#374151;">${escapeHtml(completedTime || '')}</div>
           <div style="font-size:10px;">완료일시</div>
         </div>
-        ${(window._currentUserRole === 'happycall' || window._currentUserTeam === '해피콜팀') && isAS ? `
-          <button type="button" onclick="event.stopPropagation(); window.dashStartAddRequest('${escapeHtml(docId)}')" style="flex-shrink:0;padding:8px 12px;background:#4f46e5;color:#fff;border:none;border-radius:8px;font-size:11px;font-weight:700;cursor:pointer;white-space:nowrap;">➕ 추가요청건 접수</button>
-        ` : ''}
         <div style="flex-shrink:0;color:#9ca3af;font-size:18px;">›</div>
       </div>
     `;
@@ -24726,6 +24745,34 @@
 
   // 액션: 수리 정보 수정 (AS 폼 불러오기)
   // mode: 'paid' (유상 - 추가입금 안내) | 'free' (무상 - 재검수 추가 점검)
+  // (A) 추가요청 모드 종료 시 — 숨겼던 폼 섹션/명칭 원복 (다음 신규접수에 영향 없게)
+  window.dashRestoreFormSectionsAfterAddReq = function() {
+    ['recoveryField','repairTypeCard','notesCard','normalCard','packagingCard','defectCard','partsCard','treatmentCard'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = '';
+    });
+    const partsCard = document.getElementById('partsCard');
+    if (partsCard) {
+      const t = partsCard.querySelector('.section-title');
+      if (t) t.textContent = '🔧 사용부품 (교체한 부품)';
+    }
+    const treatmentCard = document.getElementById('treatmentCard');
+    if (treatmentCard) {
+      const t = treatmentCard.querySelector('.section-title');
+      if (t) t.textContent = '처리내용';
+      const ta = document.getElementById('treatmentContent');
+      if (ta) ta.placeholder = '불량부품을 입력하면 자동으로 채워집니다';
+    }
+    // 잠금 해제
+    ['custName','custPhone','serialNumber','intakeDate','productName'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.disabled = false;
+    });
+    document.querySelectorAll('#formWrap .category-tabs .toggle-btn').forEach(b => {
+      b.style.pointerEvents = ''; b.style.opacity = '';
+    });
+  };
+
   // (A) 추가요청건 접수 — 완료된 케이스에서 새 독립 케이스 생성 모드로 진입
   //     기존 AS 접수폼을 'addreq' 모드로 재사용. 고객·제품·시리얼은 원본에서 불러오고 잠금.
   window.dashStartAddRequest = function(docId) {
@@ -24744,6 +24791,9 @@
     window._addReqOrigin = {
       originId: c.id,
       originDocId: c._docId || c.id,
+      // 담당 엔지니어 — 원본 완료건의 엔지니어를 그대로 물려받음
+      engineer: c.engineer || '',
+      happycallStaff: c.happycallStaff || '',
       // 동일 고객 그룹키 — ERP 정렬에서 원본과 함께 묶이도록
       groupKey: ((c.customer && c.customer.phone) || '') + '||' + ((c.product && c.product.serial) || ''),
     };
@@ -24755,20 +24805,79 @@
     window._addReqMode = true;        // (A) 추가요청 모드 플래그
     window._addReqCostPaid = true;    // 기본 유상 가정 (인계서)
 
+    // (A) 1. 완료 카드 상세 모달 닫기
+    if (typeof window.dashCloseModal === 'function') window.dashCloseModal();
+
     if (typeof window.dashShowMenu === 'function') window.dashShowMenu('form');
 
     setTimeout(() => {
       if (typeof window.resetForm === 'function') window.resetForm();
       setTimeout(() => {
-        // 기존 채우기 로직 재사용 (고객/제품/시리얼 등)
-        if (typeof dashFillFormFromCase === 'function') dashFillFormFromCase(c);
+        // (A) 추가요청 전용 — 필요한 필드만 직접 채움.
+        //     dashFillFormFromCase는 setTimeout으로 부품·회수품목·불량을 비동기 복원하므로 사용 안 함.
+        const customer = c.customer || {};
+        const product = c.product || {};
+        const setVal = (id, val) => { const el = document.getElementById(id); if (el && val != null) el.value = val; };
+        setVal('custName', customer.name || '');
+        setVal('custPhone', customer.phone || '');
+        setVal('intakeDate', c.intakeDate || '');
+        setVal('serialNumber', product.serial || '');
+        // 제품군 → 제품명 (부품/회수품목 자동 채움 없이 제품 선택만)
+        if (product.category && typeof window.selectCategory === 'function') {
+          window.selectCategory(product.category);
+          setTimeout(() => {
+            const productSel = document.getElementById('productName');
+            if (productSel && product.name) {
+              let attempts = 0;
+              const trySelect = () => {
+                if (productSel.querySelector(`option[value="${product.name}"]`)) {
+                  productSel.value = product.name;
+                } else if (attempts < 10) { attempts++; setTimeout(trySelect, 100); }
+              };
+              trySelect();
+            }
+          }, 100);
+        }
+
         dashShowAddRequestBanner(c);
+
+        // (A) 추가요청에 불필요한 섹션 숨김 — 간단하게 (요청내용 카드도 숨김: 입력은 배너에서)
+        const hideSections = () => {
+          ['recoveryField','repairTypeCard','notesCard','normalCard','packagingCard','defectCard','treatmentCard'].forEach(id => {
+            const el = document.getElementById(id);
+            if (el) el.style.display = 'none';
+          });
+        };
+        hideSections();
+        // 제품 선택(change)이 회수품목을 다시 표시하므로 지연 후 재숨김
+        setTimeout(hideSections, 300);
+        setTimeout(hideSections, 700);
+
+        // (A) 사용부품은 비운 채 — 고객 추가분만 입력. 약간의 지연 후에도 한 번 더 비워 잔재 제거.
+        const clearParts = () => {
+          try { if (Array.isArray(window.selectedParts)) window.selectedParts.length = 0; } catch(e){}
+          try { selectedParts.length = 0; } catch(e){}
+          try { if (Array.isArray(window.selectedPackaging)) window.selectedPackaging.length = 0; } catch(e){}
+          try { selectedPackaging.length = 0; } catch(e){}
+          if (typeof renderPartsTags === 'function') renderPartsTags();
+        };
+        clearParts();
+        setTimeout(clearParts, 300);
+        setTimeout(clearParts, 700);
+
+        // 사용부품 카드 — 보이게 + 명칭 변경
+        const partsCard = document.getElementById('partsCard');
+        if (partsCard) {
+          partsCard.style.display = '';
+          const t = partsCard.querySelector('.section-title');
+          if (t) t.textContent = '🔧 추가 요청 부품 (고객 추가분만 입력)';
+        }
+
         // 고객·제품·시리얼 잠금
         ['custName','custPhone','serialNumber','intakeDate','productName'].forEach(id => {
           const el = document.getElementById(id);
           if (el) el.disabled = true;
         });
-        // 제품군 탭 잠금 (클릭 막기)
         document.querySelectorAll('#formWrap .category-tabs .toggle-btn').forEach(b => {
           b.style.pointerEvents = 'none'; b.style.opacity = b.classList.contains('active') ? '1' : '0.45';
         });
@@ -24777,7 +24886,7 @@
     }, 100);
   };
 
-  // (A) 추가요청 모드 배너 — 비용 토글 + 흐름 미리보기
+  // (A) 추가요청 모드 배너 — 유상처리/무상처리 두 버튼으로 제출
   function dashShowAddRequestBanner(c) {
     let bannerEl = document.getElementById('dashEditModeBanner');
     if (!bannerEl) {
@@ -24787,29 +24896,24 @@
       if (formWrap) formWrap.insertBefore(bannerEl, formWrap.firstChild);
     }
     bannerEl.style.cssText = 'background:#eef2ff;color:#3730a3;padding:14px 18px;border:1.5px solid #6366f1;border-radius:10px;margin:16px 0;font-size:13px;line-height:1.6;';
-    const paid = window._addReqCostPaid !== false;
+    const engName = (window.getDisplayName ? window.getDisplayName(c.engineer) : (c.engineer || '')) || '';
     bannerEl.innerHTML = `
-      <div style="font-weight:700;margin-bottom:6px;font-size:14px;">➕ ${escapeHtml(c.id)} — 추가요청건 접수 (신규 케이스 생성)</div>
+      <div style="font-weight:700;margin-bottom:6px;font-size:14px;">➕ ${escapeHtml(c.id || '')} — 추가요청건 접수 (신규 케이스 생성)</div>
       <div style="font-size:12px;">
         완료된 고객의 추가 요청을 <b>새 독립 케이스</b>로 접수합니다. 고객정보·제품·시리얼은 원본에서 불러왔습니다(수정 불가).
-        <br>🔗 원본과 동일 고객 → ERP에서 같은 순번 그룹으로 묶입니다. · 📊 추가요청건은 실적 카운팅에서 제외됩니다.
+        <br>🔗 같은 고객 → ERP에서 동일 순번으로 올라갑니다. · 👷 담당 엔지니어: <b>${escapeHtml(engName || '원본 담당자')}</b> · 📊 실적 카운팅 제외
       </div>
       <div style="border-top:1px dashed #6366f1;margin:12px 0;"></div>
-      <label style="display:block;font-weight:700;margin-bottom:8px;color:#3730a3;">💰 비용 발생 여부 <span style="color:#ef4444;">*</span></label>
-      <div style="display:flex;gap:8px;">
-        <button type="button" onclick="window.dashAddReqSetCost(true)" id="addReqPaidBtn" style="flex:1;padding:11px;border:2px solid ${paid?'#ef4444':'#e5e7eb'};background:${paid?'#fef2f2':'#fff'};border-radius:9px;cursor:pointer;font-family:inherit;">
-          <div style="font-size:13px;font-weight:700;color:${paid?'#b91c1c':'#6b7280'};">💳 비용 발생 (유상)</div>
-          <div style="font-size:10px;color:#9ca3af;margin-top:2px;">수리대기 → 입금대기 → 완료</div>
+      <label style="display:block;font-weight:700;margin-bottom:6px;color:#3730a3;font-size:13px;">📝 요청 내용</label>
+      <textarea id="addReqContent" rows="2" placeholder="예: 고객님 재인입되어 필터 추가 구매요청" style="width:100%;box-sizing:border-box;padding:9px 11px;border:1px solid #c7d2fe;border-radius:8px;font-size:13px;font-family:inherit;resize:vertical;margin-bottom:10px;"></textarea>
+      <div style="font-size:12px;margin-bottom:8px;">사용부품을 추가한 뒤 처리 방식을 선택하세요.</div>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button type="button" onclick="dashCancelEditMode()" style="padding:10px 14px;background:#fff;border:1px solid #6366f1;color:#3730a3;border-radius:6px;font-size:12px;cursor:pointer;font-weight:600;font-family:inherit;">✕ 취소</button>
+        <button type="button" onclick="window.dashSubmitAddRequest(true)" style="flex:1;min-width:160px;padding:11px 14px;background:#E24B4A;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer;font-weight:700;font-family:inherit;">
+          💳 유상처리 → 수리대기 → 입금대기
         </button>
-        <button type="button" onclick="window.dashAddReqSetCost(false)" id="addReqFreeBtn" style="flex:1;padding:11px;border:2px solid ${!paid?'#1D9E75':'#e5e7eb'};background:${!paid?'#ecfdf5':'#fff'};border-radius:9px;cursor:pointer;font-family:inherit;">
-          <div style="font-size:13px;font-weight:700;color:${!paid?'#047857':'#6b7280'};">✅ 비용 없음 (무상)</div>
-          <div style="font-size:10px;color:#9ca3af;margin-top:2px;">수리대기 → 완료</div>
-        </button>
-      </div>
-      <div style="margin-top:12px;display:flex;gap:8px;flex-wrap:wrap;">
-        <button type="button" onclick="dashCancelEditMode()" style="padding:8px 14px;background:#fff;border:1px solid #6366f1;color:#3730a3;border-radius:6px;font-size:12px;cursor:pointer;font-weight:600;font-family:inherit;">✕ 취소</button>
-        <button type="button" onclick="window.dashSubmitAddRequest()" style="flex:1;min-width:200px;padding:10px 14px;background:#4f46e5;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer;font-weight:700;font-family:inherit;" id="addReqSubmitBtn">
-          ➕ 추가요청건 접수 → 수리대기
+        <button type="button" onclick="window.dashSubmitAddRequest(false)" style="flex:1;min-width:160px;padding:11px 14px;background:#1D9E75;color:#fff;border:none;border-radius:6px;font-size:13px;cursor:pointer;font-weight:700;font-family:inherit;">
+          ✅ 무상처리 → 수리대기
         </button>
       </div>
     `;
@@ -24820,21 +24924,15 @@
     if (draftBtn) draftBtn.style.display = 'none';
   }
 
-  window.dashAddReqSetCost = function(paid) {
-    window._addReqCostPaid = !!paid;
-    const c = { id: window._addReqOrigin ? window._addReqOrigin.originId : '' };
-    dashShowAddRequestBanner(c);
-  };
-
   // (A) 추가요청건 제출 — 새 독립 케이스 생성
-  window.dashSubmitAddRequest = async function() {
+  window.dashSubmitAddRequest = async function(paidArg) {
     if (window.blockIfOutdated && window.blockIfOutdated()) return;
     if (!window._addReqMode || !window._addReqOrigin) {
       showToast('추가요청 모드 정보가 없습니다', 'error');
       return;
     }
     const origin = window._addReqOrigin;
-    const paid = window._addReqCostPaid !== false;
+    const paid = (paidArg === true || paidArg === false) ? paidArg : (window._addReqCostPaid !== false);
 
     // 입력값 수집 (잠금 필드는 disabled여도 .value는 읽힘)
     const custName = (document.getElementById('custName').value || '').trim();
@@ -24843,7 +24941,7 @@
     const productName = (document.getElementById('productName').value || '');
     const serialNumber = (document.getElementById('serialNumber').value || '').trim();
     const intakeDate = (document.getElementById('intakeDate').value || '');
-    const treatmentContent = (document.getElementById('treatmentContent').value || '').trim();
+    const treatmentContent = ((document.getElementById('addReqContent') || {}).value || '').trim();
     const notesContent = (document.getElementById('notesContent').value || '').trim();
 
     // 사용부품 필수 (추가요청은 작업분 부품이 있어야 ERP 업로드 의미가 있음)
@@ -24917,8 +25015,8 @@
                    uploaded: !!(r && r.success), nasPath: (r && r.success) ? r.nasPath : '', shareUrl: '' };
         }),
         attachmentCount: getAllAttachments().length,
-        engineer: origin && origin.originId ? '' : (NAS_USER || ''),  // 엔지니어는 수리대기에서 배정/처리
-        happycallStaff: NAS_USER || '',   // 접수한 해피콜 직원
+        engineer: origin.engineer || '',  // (A) 원본 완료건의 담당 엔지니어 물려받음
+        happycallStaff: NAS_USER || origin.happycallStaff || '',   // 접수한 해피콜 직원
         erpProcessed: false,
         erpProcessedBy: '',
         intakeDate: intakeDate || '',
@@ -24948,6 +25046,7 @@
       window._addReqMode = false;
       window._addReqOrigin = null;
       window._addReqCostPaid = true;
+      if (typeof window.dashRestoreFormSectionsAfterAddReq === 'function') window.dashRestoreFormSectionsAfterAddReq();
       const bannerEl = document.getElementById('dashEditModeBanner');
       if (bannerEl) bannerEl.style.display = 'none';
       const sb = document.getElementById('submitBtn');
@@ -25355,18 +25454,12 @@
     window._editModeCaseId = null;
     window._editModeDocId = null;
     window._editModeType = null;
-    // (A) 추가요청 모드 정리 + 잠금 해제
+    // (A) 추가요청 모드 정리 + 섹션/잠금 원복
     if (window._addReqMode) {
       window._addReqMode = false;
       window._addReqOrigin = null;
       window._addReqCostPaid = true;
-      ['custName','custPhone','serialNumber','intakeDate','productName'].forEach(id => {
-        const el = document.getElementById(id);
-        if (el) el.disabled = false;
-      });
-      document.querySelectorAll('#formWrap .category-tabs .toggle-btn').forEach(b => {
-        b.style.pointerEvents = ''; b.style.opacity = '';
-      });
+      if (typeof window.dashRestoreFormSectionsAfterAddReq === 'function') window.dashRestoreFormSectionsAfterAddReq();
       const draftBtn = document.getElementById('draftSaveBtn');
       if (draftBtn) draftBtn.style.display = '';
     }
@@ -31477,8 +31570,11 @@
   async function tsLoadRangeStats(start, end) {
     const stats = {};
     const ensureUser = (uid) => {
-      if (!stats[uid]) stats[uid] = { workMin: 0, breakMin: 0, toiletMin: 0, awayMin: 0, asCount: 0, erCount: 0, npCount: 0, lateCount: 0, days: new Set(), history: [], _firstWorkByDate: {} };
-      return stats[uid];
+      // (버그수정) 같은 사람이 대소문자 다른 키로 갈려 근무시간/AS처리량이 분리되던 문제 →
+      //           stats 키를 항상 소문자로 통일.
+      const key = String(uid || '').toLowerCase();
+      if (!stats[key]) stats[key] = { workMin: 0, breakMin: 0, toiletMin: 0, awayMin: 0, asCount: 0, erCount: 0, npCount: 0, lateCount: 0, days: new Set(), history: [], _firstWorkByDate: {} };
+      return stats[key];
     };
 
     // 1) userStatusHistory 로드 (date 필드 또는 startedAt 기준)
