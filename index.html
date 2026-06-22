@@ -5018,7 +5018,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v45';
+  const APP_VERSION = 'v46';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -18562,6 +18562,23 @@
   }
 
   // ==================== 카드 상세 모달 ====================
+  // (1번) 소통내역 확인 처리 — 읽음 시각 저장 후 배너 제거
+  window.dashConfirmCommRead = async function(docId, who) {
+    try {
+      const field = who === 'happycall' ? 'lastReadByHappycall' : 'lastReadByEngineer';
+      await setDoc(doc(db, 'cases', docId), {
+        [field]: new Date().toISOString(),
+        updatedAt: serverTimestamp(),
+      }, { merge: true });
+      const banner = document.getElementById('commConfirmBanner');
+      if (banner) banner.remove();
+      showToast('확인했습니다', 'success');
+    } catch(e) {
+      console.error('소통내역 확인 실패:', e);
+      showToast('확인 처리 실패: ' + (e.message || e), 'error');
+    }
+  };
+
   // 해피콜 메모 탭 전환
   window.dashSwitchMemoTab = function(tab, caseId) {
     const histEl = document.getElementById('tabHistory_' + caseId);
@@ -18893,6 +18910,39 @@
       `;
     }
 
+    // ===== (1번) 소통내역 확인 — 상대가 남긴 마지막 메시지를 내가 확인했는지 =====
+    // 내 역할 기준 상대 메시지(해피콜이면 엔지니어 글, 엔지니어면 해피콜 글)의 마지막 시각을,
+    // 내가 마지막 확인한 시각과 비교. 안 읽었으면 확인 배너 표시.
+    const _commRole = (typeof getCurrentUserRole === 'function') ? getCurrentUserRole() : (window._currentUserRole || 'engineer');
+    const _iamHappycall = (_commRole === 'happycall' || (window._currentUserTeam === '해피콜팀'));
+    const _iamMaster = (_commRole === 'master');
+    // 상대 역할
+    const _counterRole = _iamHappycall ? 'engineer' : 'happycall';
+    // 상대가 남긴 마지막 메시지
+    let _lastCounterMsg = null;
+    messages.forEach(m => {
+      if (m.role === _counterRole && m.when) {
+        if (!_lastCounterMsg || new Date(m.when) > new Date(_lastCounterMsg.when)) _lastCounterMsg = m;
+      }
+    });
+    // 내가 마지막 확인한 시각
+    const _myLastRead = _iamHappycall ? c.lastReadByHappycall : c.lastReadByEngineer;
+    let _needConfirm = false;
+    if (_lastCounterMsg && !_iamMaster) {  // 마스터는 강제 확인 제외(점검용 열람)
+      if (!_myLastRead) _needConfirm = true;
+      else if (new Date(_lastCounterMsg.when) > new Date(_myLastRead)) _needConfirm = true;
+    }
+    const _confirmBannerHtml = _needConfirm ? `
+      <div id="commConfirmBanner" style="background:#fef3c7;border:2px solid #f59e0b;border-radius:10px;padding:14px 16px;margin-bottom:14px;">
+        <div style="font-weight:700;color:#92400e;font-size:14px;margin-bottom:6px;">📢 ${_iamHappycall ? '엔지니어' : '해피콜'} 확인 요청 — 아직 확인하지 않은 내용이 있습니다</div>
+        <div style="background:#fff;border-radius:6px;padding:10px 12px;font-size:13px;color:#111827;white-space:pre-line;line-height:1.5;margin-bottom:10px;">${escapeHtml(_lastCounterMsg.text)}</div>
+        <button type="button" onclick="window.dashConfirmCommRead('${escapeHtml(c._docId || c.id)}','${_iamHappycall ? 'happycall' : 'engineer'}')"
+          style="width:100%;padding:11px;background:#f59e0b;color:#fff;border:none;border-radius:8px;font-size:14px;font-weight:700;cursor:pointer;">
+          ✅ 확인했습니다
+        </button>
+      </div>
+    ` : '';
+
     // 액션 상태 배열 (모달 상단 라벨용)
     const modalActionStatusList = Array.isArray(c.actionStatus) ? c.actionStatus : [];
     const modalActionStatusHtml = modalActionStatusList.map(s => {
@@ -18916,6 +18966,7 @@
 
     // ===== 모달 본문 구성 =====
     bodyEl.innerHTML = `
+      ${_confirmBannerHtml}
       <!-- 라벨 (단계 / 상태 / 종류) -->
       <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;align-items:center;">
         <span style="padding:5px 14px;border-radius:99px;font-size:13px;font-weight:800;${typeColor}">${escapeHtml(typeLabel)}</span>
@@ -18989,7 +19040,7 @@
       <div class="dash-case-section">
         <div style="display:flex;gap:0;border-bottom:1px solid #e5e7eb;margin-bottom:12px;">
           <button type="button" id="tabBtnHistory_${c.id}" onclick="dashSwitchMemoTab('history','${c.id}')" style="padding:7px 16px;font-size:13px;font-weight:700;border:none;background:transparent;cursor:pointer;border-bottom:2px solid #0f766e;color:#0f766e;">소통 내역</button>
-          <button type="button" id="tabBtnHcMemo_${c.id}" onclick="dashSwitchMemoTab('hcmemo','${c.id}')" style="padding:7px 16px;font-size:13px;font-weight:700;border:none;background:transparent;cursor:pointer;border-bottom:2px solid transparent;color:#9ca3af;">해피콜 메모 <span id="hcMemoBadge_${c.id}" style="display:none;background:#ef4444;color:#fff;border-radius:99px;font-size:10px;padding:1px 6px;margin-left:4px;"></span></button>
+          ${(_iamHappycall || _iamMaster || ['grouplead','partlead','teamlead'].includes(_commRole)) ? `<button type="button" id="tabBtnHcMemo_${c.id}" onclick="dashSwitchMemoTab('hcmemo','${c.id}')" style="padding:7px 16px;font-size:13px;font-weight:700;border:none;background:transparent;cursor:pointer;border-bottom:2px solid transparent;color:#9ca3af;">해피콜 메모 <span id="hcMemoBadge_${c.id}" style="display:none;background:#ef4444;color:#fff;border-radius:99px;font-size:10px;padding:1px 6px;margin-left:4px;"></span></button>` : ''}
         </div>
         <div id="tabHistory_${c.id}">
           ${messagesHtml ? messagesHtml.replace(/<div class="dash-case-section">.*?<h4>📝 주고받은 내용<\/h4>/, '<div>').replace(/<\/div>\s*$/, '</div>') : '<div style="color:#9ca3af;font-size:13px;padding:8px 0;">주고받은 내용이 없습니다.</div>'}
@@ -36763,8 +36814,8 @@
     }
     const parts = window._inventoryState.parts || [];
     const filtered = parts.filter(p =>
-      (p.name || '').toLowerCase().includes(kw) ||
-      (p.code || '').toLowerCase().includes(kw)
+      String(p.name || '').toLowerCase().includes(kw) ||
+      String(p.code || '').toLowerCase().includes(kw)
     ).slice(0, 20);
 
     if (filtered.length === 0) {
