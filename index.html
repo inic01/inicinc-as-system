@@ -36704,6 +36704,7 @@
           <div>
             <label style="display:block;font-size:11px;font-weight:600;color:#374151;margin-bottom:4px;">부품 검색<span style="color:#dc2626;">*</span></label>
             <input type="text" id="invAddPartSearch" placeholder="🔍 부품명/코드 검색" value="${escapeHtml(prefill.partName || '')}"
+              autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" name="invAddPartSearch_noac"
               oninput="window.inventoryAddSearchPart(this.value)"
               style="width:100%;padding:9px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;box-sizing:border-box;">
             <div id="invAddPartResults" style="max-height:180px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:6px;margin-top:4px;display:none;"></div>
