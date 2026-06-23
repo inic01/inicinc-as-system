@@ -4061,7 +4061,7 @@
         <label style="font-size:11px; font-weight:700; color:var(--text-muted); display:block; margin-bottom:6px;">택배비 <span style="color:var(--text-light); font-weight:600;">(선택)</span></label>
         <div class="toggle-group cols-4">
           <div class="toggle-btn fee-btn fee-paid-only" data-fee="3200" onclick="selectDeliveryFee('3200')">편도택배비<span class="fee-amount">3,200원</span></div>
-          <div class="toggle-btn fee-btn fee-paid-only" data-fee="6400" onclick="selectDeliveryFee('6400')">왕복택배비<span class="fee-amount">6,400원</span></div>
+          <div class="toggle-btn fee-btn fee-paid-only" id="fee6400Btn" data-fee="6400" onclick="selectDeliveryFee('6400')"><span id="fee6400Label">왕복택배비</span><span class="fee-amount">6,400원</span></div>
           <div class="toggle-btn fee-btn" data-fee="9000" onclick="selectDeliveryFee('9000')">박스구매<span class="fee-amount">9,000원</span></div>
           <div class="toggle-btn fee-btn" data-fee="12000" onclick="selectDeliveryFee('12000')">박스구매<span class="fee-amount">12,000원</span></div>
         </div>
@@ -5018,7 +5018,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v49';
+  const APP_VERSION = 'v50';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -5026,19 +5026,32 @@
   //   접수 등록 직전 구버전 여부를 판단하는 데 사용한다.
   window._latestAppVersion = null;
   // 등록 직전 호출: 구버전이면 모달 띄우고 true 반환(=등록 막아야 함), 최신이면 false.
+  // (v50) 구버전이어도 접수 자체는 막지 않는다 — 작성한 내용을 잃지 않도록.
+  //   대신 ① 폼 열 때 미리 안내(dashStartNewCase), ② 저장 성공 직후 안내(각 submit 끝)로 처리.
+  //   이 함수는 옛 호출부 호환용으로 남겨두되 항상 false(=막지 않음)를 반환한다.
   window.blockIfOutdated = function() {
-    const latest = window._latestAppVersion;
-    if (latest && latest !== APP_VERSION) {
-      const banner = document.getElementById('versionBanner');
-      const msg = document.getElementById('versionBannerMessage');
-      if (banner && msg) {
-        msg.textContent = `현재 버전(${APP_VERSION})은 예전 버전입니다. 새로고침 후 다시 등록해주세요. (최신 ${latest})`;
-        if (window.fillVersionChangelog) window.fillVersionChangelog(latest);
-        banner.style.display = 'flex';
-      }
-      return true;
-    }
     return false;
+  };
+
+  // (v50) 구버전이면 업데이트 안내 오버레이를 띄운다. 띄웠으면 true.
+  //   context: 'open'(폼 열기 전) | 'saved'(접수 저장 직후) | 그 외(일반)
+  window.showUpdateBannerIfOutdated = function(context) {
+    const latest = window._latestAppVersion;
+    if (!latest || latest === APP_VERSION) return false;
+    const banner = document.getElementById('versionBanner');
+    const msg = document.getElementById('versionBannerMessage');
+    if (banner && msg) {
+      if (context === 'saved') {
+        msg.textContent = `접수는 정상 등록되었습니다. 새 버전(${latest})이 있어 새로고침이 필요합니다. (현재 ${APP_VERSION})`;
+      } else if (context === 'open') {
+        msg.textContent = `새 버전(${latest})이 있습니다. 새로고침한 뒤 접수를 작성해주세요. (현재 ${APP_VERSION})`;
+      } else {
+        msg.textContent = `현재 버전(${APP_VERSION}) → 최신 버전(${latest}). 새로고침하면 적용됩니다.`;
+      }
+      if (window.fillVersionChangelog) window.fillVersionChangelog(latest);
+      banner.style.display = 'flex';
+    }
+    return true;
   };
 
   // (step37) 버전별 수정사항 — 모달에 표시. 최신 배포 항목을 맨 위에 추가하면 됩니다.
@@ -13808,6 +13821,12 @@
 
 
   window.dashStartNewCase = function(type) {
+    // (v50) 구버전이면 작성을 시작하기 전에 먼저 안내한다.
+    //   오버레이가 새로고침을 유도하므로 폼은 열지 않고 여기서 멈춘다(헛수고 방지).
+    if ((type === 'AS' || type === '교환' || type === '반품') &&
+        window.showUpdateBannerIfOutdated && window.showUpdateBannerIfOutdated('open')) {
+      return;
+    }
     if (type === 'AS') {
       // (v15) [신규 AS 접수] 진입 시 임시저장 모드 해제 — 새 접수 흐름임을 보장
       window._draftModeCaseId = null;
@@ -26337,6 +26356,8 @@
   // ==================== 제품명 변경 시 회수품목 + 불량명 picker 갱신 ====================
   productNameEl.addEventListener('change', () => {
     const productName = productNameEl.value;
+    // (v50) 제품 변경 시 분유포트 iEK01 택배비 라벨/노출 재적용
+    if (window.applyBunyuPortFee) window.applyBunyuPortFee();
     if (!productName) {
       hideRecoveryItems();
       return;
@@ -26895,6 +26916,32 @@
   // - 방문AS 유상/무상 → 수령방식 필드 펼침
   // - 확인요청 → 안내 박스 표시 + 불량/처리내용 카드 숨김
   // - 같은 버튼 다시 누르면 해제 (필수값 검증은 등록 시에만 함)
+  // (v50) 분유포트 iEK01 전용 택배비 표시 — 6,400원 버튼 라벨/노출 조정.
+  //   무상  → "대체품"(무상에서도 노출)
+  //   유상  → "왕복택배비/대체품"
+  //   그 외 제품/유형 → 기본 "왕복택배비"(유상에서만 노출)
+  //   금액(6400)·data-fee·저장값은 그대로. 바뀌는 건 버튼에 보이는 이름과 노출 여부뿐.
+  window.applyBunyuPortFee = function() {
+    const btn = document.getElementById('fee6400Btn');
+    const label = document.getElementById('fee6400Label');
+    if (!btn || !label) return;
+    const prod = (document.getElementById('productName')?.value || '');
+    const isBunyu = /iEK01/i.test(prod) || prod.includes('분유포트');
+    const rt = document.getElementById('repairType')?.value || '';
+    const isPaid = rt === '유상';   // 방문AS는 제외 (정확히 '유상'만)
+    const isFree = rt === '무상';
+    if (isBunyu && isFree) {
+      btn.style.display = '';
+      label.textContent = '대체품';
+    } else if (isBunyu && isPaid) {
+      btn.style.display = '';
+      label.textContent = '왕복택배비/대체품';
+    } else {
+      label.textContent = '왕복택배비';
+      btn.style.display = isPaid ? '' : 'none';  // 기본 규칙: 유상만 노출
+    }
+  };
+
   window.selectRepairType = function(value) {
     const currentVal = document.getElementById('repairType').value;
     const isToggleOff = (currentVal === value); // 같은 버튼 다시 → 해제
@@ -26951,14 +26998,19 @@
     document.querySelectorAll('.fee-paid-only').forEach(btn => {
       btn.style.display = isPaid ? '' : 'none';
     });
+    // (v50) 분유포트 iEK01이면 6,400원 버튼 라벨/노출을 위 기본 규칙 위에 덮어씀
+    if (window.applyBunyuPortFee) window.applyBunyuPortFee();
     if (!isNormal) {
       // 방문/확인요청으로 바꿀 때 택배비 초기화
       document.getElementById('deliveryFee').value = '';
       document.querySelectorAll('#deliveryFeeField .toggle-btn').forEach(b => b.classList.remove('active'));
     } else if (isFreeNormal) {
       // 무상으로 바꿀 때 편도/왕복 선택 초기화
+      //   단, 분유포트 iEK01은 6,400(대체품)이 무상에서도 유효하므로 6,400은 유지.
       const feeVal = parseInt(document.getElementById('deliveryFee').value || '0');
-      if (feeVal === 3200 || feeVal === 6400) {
+      const _prod = (document.getElementById('productName')?.value || '');
+      const _isBunyu = /iEK01/i.test(_prod) || _prod.includes('분유포트');
+      if (feeVal === 3200 || (feeVal === 6400 && !_isBunyu)) {
         document.getElementById('deliveryFee').value = '';
         document.querySelectorAll('#deliveryFeeField .toggle-btn').forEach(b => b.classList.remove('active'));
       }
@@ -29537,6 +29589,8 @@
       formWrap.style.display = 'none';
       successWrap.style.display = 'block';
       window.scrollTo({ top: 0, behavior: 'smooth' });
+      // (v50) 구버전이었으면 저장이 끝난 뒤 안내 (작성·접수 내용은 이미 저장됨)
+      if (window.showUpdateBannerIfOutdated) window.showUpdateBannerIfOutdated('saved');
 
       // 자동 ERP완료 케이스는 메시지에 표시
       if (erpProcessed) {
@@ -31237,6 +31291,8 @@
       document.getElementById('erpFormWrap').style.display = 'none';
       document.getElementById('erpSuccessWrap').style.display = '';
       window.scrollTo({ top: 0, behavior: 'smooth' });
+      // (v50) 구버전이었으면 저장이 끝난 뒤 안내 (접수 내용은 이미 저장됨)
+      if (window.showUpdateBannerIfOutdated) window.showUpdateBannerIfOutdated('saved');
 
       if (stage === '해피콜완료') {
         showToast(`접수 완료 → 해피콜완료 (ERP 전산 작업 대상)`, 'success');
@@ -31773,6 +31829,8 @@
         if (r.bosangSale === true || r.discardRequested === true) return;
         // (A) 추가요청건은 실적 카운팅에서 제외
         if (r.isAddReq === true || r.excludeFromCount === true) return;
+        // (v50) 임시저장(_isDraft)은 정식 접수가 아님 — [접수등록하기] 안 누른 건이라 처리량 제외
+        if (r._isDraft === true || r.stage === '임시저장') return;
         // 접수 시각 기준 (createdAt)
         let ts = null;
         if (r.createdAt && r.createdAt.toDate) ts = r.createdAt.toDate().getTime();
@@ -33693,6 +33751,8 @@
           if (t !== team) return;
         }
         if (c.bosangSale === true || c.discardRequested === true) return;
+        // (v50) 임시저장은 정식 접수가 아니므로 처리량 제외
+        if (c._isDraft === true || c.stage === '임시저장') return;
         const dt = toDate(c.createdAt);
         if (dt) {
           if (dt >= start && dt < end) asCount++;
@@ -34266,6 +34326,8 @@
       const snapAs = await getDocs(qAs);
       snapAs.forEach(d => {
         const c = d.data();
+        // (v50) 임시저장은 정식 접수가 아니므로 처리량 제외
+        if (c._isDraft === true || c.stage === '임시저장') return;
         const cat = c.product && c.product.category;
         if (team && team !== 'all') {
           const t = window.inventoryGetTeamForCategory(cat);
