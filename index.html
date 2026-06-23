@@ -5018,7 +5018,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v48';
+  const APP_VERSION = 'v49';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -31201,6 +31201,11 @@
         // v17 수정: 해피콜팀 거치지 않고 즉시 해피콜완료된 케이스는
         //          ERP 전산 작업 대상이 되도록 erpReadyForInput=true 직접 세팅
         erpReadyForInput: (stage === '해피콜완료'),
+        // (v49) 교환/반품 신규 접수에도 erpPartsUploaded:false를 반드시 넣는다.
+        //   이 필드가 없으면 대시보드 진행중 쿼리 where('erpPartsUploaded','==',false)에
+        //   "필드 없는 문서는 매칭 안 됨" 규칙 때문에 교환/반품 건이 통째로 안 보였음.
+        //   (AS 신규접수는 이미 false를 넣고 있었음 — 경로가 달라 교환/반품만 누락됐던 버그)
+        erpPartsUploaded: false,
 
         intakeDate: intakeDate || '',
         createdDate: datePart,
