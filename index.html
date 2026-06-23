@@ -5018,7 +5018,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v46';
+  const APP_VERSION = 'v47';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -7710,6 +7710,7 @@
       </div>
     `;
   };
+
 
   // 객체 안의 모든 문자열 값을 재귀로 모아 검색용 텍스트로 만든다(중첩 필드 포함).
   function _flattenValues(obj, acc) {
@@ -17614,7 +17615,7 @@
       if (isHappycallTeam) {
         // (v20) 해피콜팀 — 담당자/조장 모두 전체 케이스 조회 (엔지니어 무관)
         // (수정) limit 500→1000: 완료 건이 많아 진행 중인 옛 케이스가 밀려 안 보이던 문제
-        q = query(collection(db, 'cases'), orderBy('createdAt', 'desc'), limit(1000));
+        q = query(collection(db, 'cases'), orderBy("createdAt", "desc"), limit(2000));
       } else if (role === 'engineer') {
         // 본인 케이스만 — engineer 필드는 NAS_USER(영문 ID)로 저장됨
         const engineerId = NAS_USER || '';
@@ -17634,17 +17635,24 @@
         // 조장/팀장 — 전체 구독 후 클라이언트에서 팀 필터링
         // product.category 표기 불일치 문제 방지 + 교환/반품도 함께 포함
         // (수정) limit 500→1000: 완료 건이 많아 진행 중인 옛 케이스가 밀려 안 보이던 문제
-        q = query(collection(db, 'cases'), orderBy('createdAt', 'desc'), limit(1000));
+        q = query(collection(db, 'cases'), orderBy("createdAt", "desc"), limit(2000));
       } else {
         // 마스터/파트장/팀장/품질 — 전체
         // (수정) limit 500→1000: 완료 건이 많아 진행 중인 옛 케이스가 밀려 안 보이던 문제
-        q = query(collection(db, 'cases'), orderBy('createdAt', 'desc'), limit(1000));
+        q = query(collection(db, 'cases'), orderBy("createdAt", "desc"), limit(2000));
       }
 
       dashUnsubscribe = onSnapshot(q, (snapshot) => {
         dashAllCases = [];
         snapshot.forEach(doc => {
           const data = doc.data() || {};
+          // (5번) 완료접수내역으로 이동한 건(ERP 처리 + 사용부품 업로드 완료)은
+          //       대시보드 메인에서 어차피 안 보이므로 dashAllCases에 담지 않는다.
+          //       → 진행 중 건이 limit에 밀려 사라지던 문제 해결 + 메모리/렌더 절감.
+          //       (완료접수내역 화면은 별도 쿼리로 로드하므로 영향 없음)
+          if (data.stage === '해피콜완료' && data.erpProcessed === true && data.erpPartsUploaded === true) {
+            return; // 완전 완료 → 제외
+          }
           dashAllCases.push({ ...data, _docId: doc.id });
         });
         window.dashAllCases = dashAllCases;
@@ -23580,7 +23588,7 @@
         collection(db, 'cases'),
         where('erpPartsUploaded', '==', true),
         orderBy('createdAt', 'desc'),
-        limit(1000)
+        limit(2000)
       );
       const snap = await getDocs(q);
       const items = [];
@@ -29460,6 +29468,9 @@
         // 전산 처리 (직접수령 시 자동 true)
         erpProcessed,
         erpProcessedBy: erpProcessed ? '(자동: 직접수령)' : '',
+        // (5번) ERP 사용부품 업로드 여부 — 신규 접수는 항상 false로 시작.
+        //       이 필드가 있어야 완료 건 제외 쿼리/마이그레이션이 누락 없이 동작함.
+        erpPartsUploaded: false,
         // 메타
         intakeDate: intakeDate || '',
         createdDate: datePart,
@@ -36755,13 +36766,13 @@
             </select>
           </div>
 
-          <div>
+          <div style="position:relative;">
             <label style="display:block;font-size:11px;font-weight:600;color:#374151;margin-bottom:4px;">부품 검색<span style="color:#dc2626;">*</span></label>
             <input type="text" id="invAddPartSearch" placeholder="🔍 부품명/코드 검색" value="${escapeHtml(prefill.partName || '')}"
               autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" name="invAddPartSearch_noac"
               oninput="window.inventoryAddSearchPart(this.value)"
               style="width:100%;padding:9px 12px;border:1px solid #d1d5db;border-radius:6px;font-size:13px;box-sizing:border-box;">
-            <div id="invAddPartResults" style="max-height:180px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:6px;margin-top:4px;display:none;"></div>
+            <div id="invAddPartResults" style="position:absolute;left:0;right:0;top:100%;z-index:20;background:#fff;max-height:180px;overflow-y:auto;border:1px solid #e5e7eb;border-radius:6px;margin-top:4px;display:none;box-shadow:0 4px 12px rgba(0,0,0,0.1);"></div>
             <div id="invAddPartSelected" style="margin-top:6px;font-size:12px;color:#374151;${prefill.partName ? '' : 'display:none;'}">
               ${prefill.partName ? `✓ 선택: <b>${escapeHtml(prefill.partName)}</b> <span style="color:#9ca3af;font-family:monospace;">(${escapeHtml(prefill.partCode || '-')})</span>` : ''}
             </div>
