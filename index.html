@@ -5018,7 +5018,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v47';
+  const APP_VERSION = 'v48';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -17614,8 +17614,9 @@
       let q;
       if (isHappycallTeam) {
         // (v20) 해피콜팀 — 담당자/조장 모두 전체 케이스 조회 (엔지니어 무관)
-        // (수정) limit 500→1000: 완료 건이 많아 진행 중인 옛 케이스가 밀려 안 보이던 문제
-        q = query(collection(db, 'cases'), orderBy("createdAt", "desc"), limit(2000));
+        // (5번) 완료접수내역으로 간 건(erpPartsUploaded=true)은 안 불러옴 → 진행 중만.
+        //       완료 건이 limit를 잡아먹어 옛 진행 건이 밀리던 문제 근본 해결 + 읽기 절감.
+        q = query(collection(db, 'cases'), where('erpPartsUploaded', '==', false), orderBy('createdAt', 'desc'), limit(1000));
       } else if (role === 'engineer') {
         // 본인 케이스만 — engineer 필드는 NAS_USER(영문 ID)로 저장됨
         const engineerId = NAS_USER || '';
@@ -17633,13 +17634,12 @@
         );
       } else if (role === 'grouplead' || role === 'teamlead') {
         // 조장/팀장 — 전체 구독 후 클라이언트에서 팀 필터링
-        // product.category 표기 불일치 문제 방지 + 교환/반품도 함께 포함
-        // (수정) limit 500→1000: 완료 건이 많아 진행 중인 옛 케이스가 밀려 안 보이던 문제
-        q = query(collection(db, 'cases'), orderBy("createdAt", "desc"), limit(2000));
+        // (5번) 완료 건(erpPartsUploaded=true) 제외 → 진행 중만 불러옴
+        q = query(collection(db, 'cases'), where('erpPartsUploaded', '==', false), orderBy('createdAt', 'desc'), limit(1000));
       } else {
         // 마스터/파트장/팀장/품질 — 전체
-        // (수정) limit 500→1000: 완료 건이 많아 진행 중인 옛 케이스가 밀려 안 보이던 문제
-        q = query(collection(db, 'cases'), orderBy("createdAt", "desc"), limit(2000));
+        // (5번) 완료 건(erpPartsUploaded=true) 제외 → 진행 중만 불러옴
+        q = query(collection(db, 'cases'), where('erpPartsUploaded', '==', false), orderBy('createdAt', 'desc'), limit(1000));
       }
 
       dashUnsubscribe = onSnapshot(q, (snapshot) => {
