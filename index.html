@@ -25114,7 +25114,9 @@
           role: 'happycall',
           fromStage: '',
           toStage: stage,
-          note: `[추가요청 접수] 원본 ${origin.originId} · ${paid ? '유상(입금대기 경유)' : '무상'}`,
+          // (v50) 상단에 작성한 요청 내용을 소통내역에 함께 기록 → 엔지니어가 미확인 배너로 받음
+          note: `[추가요청 접수] 원본 ${origin.originId} · ${paid ? '유상(입금대기 경유)' : '무상'}`
+              + (treatmentContent ? `\n요청 내용: ${treatmentContent}` : ''),
           action: '추가요청접수',
         }],
       };
@@ -25233,6 +25235,20 @@
         note: `[추가요청 병합] ${c.id} 의 사용부품 ${addParts.length}건을 추가 (${paid ? '유상' : '무상'})`,
         action: '추가요청병합',
       };
+      // (v50) 추가요청 요청 내용을 원본 소통내역에도 남긴다 — 임시 케이스 삭제 후에도 사유가 보존되도록.
+      const _reqNote = (c.treatmentContent || '').trim();
+      const _appendHist = [mergeHist];
+      if (_reqNote) {
+        _appendHist.push({
+          changedAt: new Date().toISOString(),
+          changedBy: c.happycallStaff || '해피콜',
+          role: 'happycall',
+          fromStage: origin.stage || '해피콜완료',
+          toStage: origin.stage || '해피콜완료',
+          note: `[추가요청 내용] ${_reqNote}`,
+          action: '추가요청',
+        });
+      }
       await setDoc(originRef, {
         partsUsed: mergedPartsUsed,
         partsTotal: mergedPartsTotal,
@@ -25241,7 +25257,7 @@
         erpPartsReadyForUpload: true,
         addReqMergedIds: [...(Array.isArray(origin.addReqMergedIds) ? origin.addReqMergedIds : []), c.id],
         updatedAt: serverTimestamp(),
-        statusHistory: [...originHist, mergeHist],
+        statusHistory: [...originHist, ..._appendHist],
       }, { merge: true });
 
       // 5) 병합 성공 후에만 임시 케이스 삭제 (데이터 보호 — 순서 중요)
@@ -25662,10 +25678,9 @@
         : isPaid
           ? `[추가입금] ${extraReason}`
           : (freeToDeposit
-              // (v25) 버그 수정: 입금대기로 보낼 때도 상단에 기재한 재검수 답변을 함께 저장
-              //        기존엔 고정 문구로 덮여서 답변 내용이 증발했음
-              ? ('[추가입금] 필터·구매 등 추가 비용 발생 → 입금대기'
-                  + (reinspectAnswerForHistory ? `\n[재검수 답변] ${reinspectAnswerForHistory}` : ''))
+              // (v50) 고정 문구('[추가입금] 필터·구매 등 추가 비용 발생 → 입금대기') 제거.
+              //        무상→입금대기 소통내역엔 엔지니어가 적은 재검수 답변만 남긴다.
+              ? (reinspectAnswerForHistory ? `[재검수 답변] ${reinspectAnswerForHistory}` : '')
               : (reinspectAnswerForHistory
                   ? `[재검수 답변] ${reinspectAnswerForHistory}`
                   : '[수리완료] 재검수 추가 점검 완료')),
