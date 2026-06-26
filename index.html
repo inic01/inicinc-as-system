@@ -4060,10 +4060,11 @@
       <div class="field-collapsible" id="deliveryFeeField">
         <label style="font-size:11px; font-weight:700; color:var(--text-muted); display:block; margin-bottom:6px;">택배비 <span style="color:var(--text-light); font-weight:600;">(선택)</span></label>
         <div class="toggle-group cols-4">
-          <div class="toggle-btn fee-btn fee-paid-only" data-fee="3200" onclick="selectDeliveryFee('3200')">편도택배비<span class="fee-amount">3,200원</span></div>
-          <div class="toggle-btn fee-btn fee-paid-only" id="fee6400Btn" data-fee="6400" onclick="selectDeliveryFee('6400')"><span id="fee6400Label">왕복택배비</span><span class="fee-amount">6,400원</span></div>
-          <div class="toggle-btn fee-btn" data-fee="9000" onclick="selectDeliveryFee('9000')">박스구매<span class="fee-amount">9,000원</span></div>
-          <div class="toggle-btn fee-btn" data-fee="12000" onclick="selectDeliveryFee('12000')">박스구매<span class="fee-amount">12,000원</span></div>
+          <div class="toggle-btn fee-btn fee-paid-only" data-fee="3200" onclick="selectDeliveryFee('3200', this)">편도택배비<span class="fee-amount">3,200원</span></div>
+          <div class="toggle-btn fee-btn fee-paid-only" id="fee6400Btn" data-fee="6400" onclick="selectDeliveryFee('6400', this)"><span id="fee6400Label">왕복택배비</span><span class="fee-amount">6,400원</span></div>
+          <div class="toggle-btn fee-btn" id="feeAltBtn" data-fee="6400" style="display:none;" onclick="selectDeliveryFee('6400', this)">대체품<span class="fee-amount">6,400원</span></div>
+          <div class="toggle-btn fee-btn" data-fee="9000" onclick="selectDeliveryFee('9000', this)">박스구매<span class="fee-amount">9,000원</span></div>
+          <div class="toggle-btn fee-btn" data-fee="12000" onclick="selectDeliveryFee('12000', this)">박스구매<span class="fee-amount">12,000원</span></div>
         </div>
         <input type="hidden" id="deliveryFee" value="">
       </div>
@@ -5018,7 +5019,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v51';
+  const APP_VERSION = 'v52';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -26936,25 +26937,27 @@
   //   유상  → "왕복택배비/대체품"
   //   그 외 제품/유형 → 기본 "왕복택배비"(유상에서만 노출)
   //   금액(6400)·data-fee·저장값은 그대로. 바뀌는 건 버튼에 보이는 이름과 노출 여부뿐.
+  // (v52) 택배비 버튼 노출/라벨 규칙
+  //   - 왕복택배비(6,400): 무상·유상 모두 노출(모든 제품). 라벨은 기본 '왕복택배비',
+  //                        단 분유포트 유상은 v51 그대로 '왕복택배비/대체품' 유지(유상은 변경 없음).
+  //   - 대체품(6,400, feeAltBtn): 분유포트 iEK01 + 무상일 때만 별도 버튼으로 노출.
+  //   - 편도택배비(3,200): 유상만(기존 fee-paid-only 그대로).
   window.applyBunyuPortFee = function() {
-    const btn = document.getElementById('fee6400Btn');
+    const btn = document.getElementById('fee6400Btn');     // 왕복택배비
     const label = document.getElementById('fee6400Label');
+    const alt = document.getElementById('feeAltBtn');       // 대체품(분유포트 무상 전용)
     if (!btn || !label) return;
     const prod = (document.getElementById('productName')?.value || '');
     const isBunyu = /iEK01/i.test(prod) || prod.includes('분유포트');
     const rt = document.getElementById('repairType')?.value || '';
-    const isPaid = rt === '유상';   // 방문AS는 제외 (정확히 '유상'만)
+    const isPaid = rt === '유상';   // 방문AS 등은 제외 (정확히 '유상'만)
     const isFree = rt === '무상';
-    if (isBunyu && isFree) {
-      btn.style.display = '';
-      label.textContent = '대체품';
-    } else if (isBunyu && isPaid) {
-      btn.style.display = '';
-      label.textContent = '왕복택배비/대체품';
-    } else {
-      label.textContent = '왕복택배비';
-      btn.style.display = isPaid ? '' : 'none';  // 기본 규칙: 유상만 노출
-    }
+    // 왕복택배비: 무상/유상 모두 노출, 그 외(방문·확인요청)는 숨김
+    btn.style.display = (isFree || isPaid) ? '' : 'none';
+    // 라벨: 분유포트 유상만 '왕복택배비/대체품'(v51 유지), 그 외엔 '왕복택배비'
+    label.textContent = (isBunyu && isPaid) ? '왕복택배비/대체품' : '왕복택배비';
+    // 대체품: 분유포트 + 무상일 때만 노출
+    if (alt) alt.style.display = (isBunyu && isFree) ? '' : 'none';
   };
 
   window.selectRepairType = function(value) {
@@ -27020,12 +27023,9 @@
       document.getElementById('deliveryFee').value = '';
       document.querySelectorAll('#deliveryFeeField .toggle-btn').forEach(b => b.classList.remove('active'));
     } else if (isFreeNormal) {
-      // 무상으로 바꿀 때 편도/왕복 선택 초기화
-      //   단, 분유포트 iEK01은 6,400(대체품)이 무상에서도 유효하므로 6,400은 유지.
+      // 무상으로 바꿀 때: 편도(3,200)만 해제. 왕복(6,400)·박스·대체품은 무상에서도 유효하므로 유지.
       const feeVal = parseInt(document.getElementById('deliveryFee').value || '0');
-      const _prod = (document.getElementById('productName')?.value || '');
-      const _isBunyu = /iEK01/i.test(_prod) || _prod.includes('분유포트');
-      if (feeVal === 3200 || (feeVal === 6400 && !_isBunyu)) {
+      if (feeVal === 3200) {
         document.getElementById('deliveryFee').value = '';
         document.querySelectorAll('#deliveryFeeField .toggle-btn').forEach(b => b.classList.remove('active'));
       }
@@ -27069,18 +27069,31 @@
   // ==================== 택배비 토글 ====================
   // 같은 버튼 다시 누르면 해제. 다른 버튼 누르면 그쪽으로 이동.
   // 변경 시 renderQtyTable 호출해서 사용부품 합계에 반영
-  window.selectDeliveryFee = function(value) {
-    const currentVal = document.getElementById('deliveryFee').value;
-    const isToggleOff = (currentVal === value); // 같은 값을 다시 누른 경우 → 해제
-
-    if (isToggleOff) {
+  window.selectDeliveryFee = function(value, el) {
+    // (v52) el(클릭한 버튼)이 있으면 그 버튼 기준으로 토글/활성 — 같은 값(6,400)이
+    //        둘(왕복택배비·대체품)이어도 하나만 켜지고 정확히 토글된다.
+    //        el이 없으면(케이스 복원 시) 기존처럼 값으로 매칭한다.
+    if (el) {
+      const isToggleOff = el.classList.contains('active'); // 켜져 있던 같은 버튼 재클릭 → 해제
       document.querySelectorAll('#deliveryFeeField .toggle-btn').forEach(b => b.classList.remove('active'));
-      document.getElementById('deliveryFee').value = '';
+      if (isToggleOff) {
+        document.getElementById('deliveryFee').value = '';
+      } else {
+        el.classList.add('active');
+        document.getElementById('deliveryFee').value = value;
+      }
     } else {
-      document.querySelectorAll('#deliveryFeeField .toggle-btn').forEach(b => {
-        b.classList.toggle('active', b.dataset.fee === value);
-      });
-      document.getElementById('deliveryFee').value = value;
+      const currentVal = document.getElementById('deliveryFee').value;
+      const isToggleOff = (currentVal === value);
+      if (isToggleOff) {
+        document.querySelectorAll('#deliveryFeeField .toggle-btn').forEach(b => b.classList.remove('active'));
+        document.getElementById('deliveryFee').value = '';
+      } else {
+        document.querySelectorAll('#deliveryFeeField .toggle-btn').forEach(b => {
+          b.classList.toggle('active', b.dataset.fee === value);
+        });
+        document.getElementById('deliveryFee').value = value;
+      }
     }
 
     // 사용부품 표에 택배비 반영 (renderQtyTable이 deliveryFee를 직접 읽음)
