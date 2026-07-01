@@ -5019,7 +5019,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v54';
+  const APP_VERSION = 'v56';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -20365,6 +20365,15 @@
             action: () => window.dashActionEnterFixMode(c)
           });
         }
+        // (v56) 확인요청에서 조장이 교환↔반품 종류 전환. 재검수 확인요청에서만
+        //   (이미 전환 진행 중(isSwapCase)·협의 중(isNegotiatePending)일 땐 제외).
+        //   전환 후 확인요청 유지 → [수리정보 불러오기]로 새 종류 폼 채우며 ID가 반품-/교환-로 바뀜.
+        if (!isSwapCase && !isNegotiatePending) {
+          swapBtn = {
+            id: 'actSwapType', label: isExchange ? '🔁 반품으로 전환' : '🔁 교환으로 전환',
+            action: () => dashActionERSwapType(c, isExchange ? '반품' : '교환')
+          };
+        }
       }
     }
     // ===== 처리대기 (실제 실행 업무: 교환출고/반품수거/환불/송장 등) =====
@@ -23214,6 +23223,7 @@
     let totalRows = 0, partCount = 0, packCount = 0;
     targets.forEach(t => {
       (t.erpPartsRows || []).forEach(r => {
+        if (r.uploaded === true) return;   // (v55) 이미 업로드된 행 제외
         totalRows++;
         if (r.kind === '부품') partCount++;
         else if (r.kind === '포장재') packCount++;
@@ -23289,6 +23299,7 @@
       window._erpPartsSelectedRows = new Set();
       targets.forEach(tc => {
         (tc.erpPartsRows || []).forEach((r, idx) => {
+          if (r.uploaded === true) return;   // (v55) 업로드된 행 제외
           window._erpPartsSelectedRows.add(`${tc.id}__${idx}`);
         });
       });
@@ -23315,6 +23326,7 @@
         const tc = targets.find(t => t.id === cid);
         if (!tc) return;
         (tc.erpPartsRows || []).forEach((r, idx) => {
+          if (r.uploaded === true) return;   // (v55) 업로드된 행 제외
           const key = `${cid}__${idx}`;
           if (cb.checked) window._erpPartsSelectedRows.add(key);
           else window._erpPartsSelectedRows.delete(key);
@@ -23358,8 +23370,10 @@
       const product = tc.product || {};
       const time = dashFormatTime(tc.erpProcessedAt) || dashFormatTime(tc.createdAt);
       const rows = tc.erpPartsRows || [];
-      // 이 케이스의 모든 행이 체크돼야 "케이스 전체 선택"
-      const caseSelected = rows.length > 0 && rows.every((_, idx) => window._erpPartsSelectedRows.has(`${tc.id}__${idx}`));
+      // (v55) 이미 업로드된 행은 큐에서 제외 — 원본 인덱스는 유지(키 일관성)
+      const pendingIdxs = rows.map((r, idx) => ({ r, idx })).filter(o => o.r.uploaded !== true).map(o => o.idx);
+      // 이 케이스의 (미업로드) 모든 행이 체크돼야 "케이스 전체 선택"
+      const caseSelected = pendingIdxs.length > 0 && pendingIdxs.every(idx => window._erpPartsSelectedRows.has(`${tc.id}__${idx}`));
 
       // 케이스 순번 부여
       // - 선택 없음(전체 받기): 모두 selectedSeq
@@ -23382,6 +23396,7 @@
       // (이전에는 "📁 AS-... · 고객명 · 제품명" 그룹 헤더가 있었지만 엑셀에는 없으므로 제거)
 
       rows.forEach((r, idx) => {
+        if (r.uploaded === true) return;   // (v55) 이미 업로드된 행은 큐에 표시 안 함
         const key = `${tc.id}__${idx}`;
         const isSel = window._erpPartsSelectedRows.has(key);
         const kindBg = r.kind === '부품' ? '#dbeafe' : '#fef3c7';
@@ -23483,6 +23498,7 @@
         // 이 케이스에서 선택된 행 목록 미리 수집
         const caseRowsToInclude = [];
         (tc.erpPartsRows || []).forEach((r, idx) => {
+          if (r.uploaded === true) return;   // (v55) 이미 업로드된 행은 다운로드 제외
           const key = `${tc.id}__${idx}`;
           if (hasSelection && !selectedKeys.has(key)) return;
           caseRowsToInclude.push(r);
@@ -23537,12 +23553,12 @@
     const fullyCheckedCaseIds = [];
     const partiallyCheckedCaseIds = [];
     targets.forEach(tc => {
-      const total = (tc.erpPartsRows || []).length;
+      // (v55) 미업로드 행 기준으로 전체선택 판정
+      const pendingIdxs = (tc.erpPartsRows || []).map((r, i) => ({ r, i })).filter(o => o.r.uploaded !== true).map(o => o.i);
+      const pendingTotal = pendingIdxs.length;
       let checked = 0;
-      for (let i = 0; i < total; i++) {
-        if (selectedKeys.has(`${tc.id}__${i}`)) checked++;
-      }
-      if (checked === total && total > 0) fullyCheckedCaseIds.push(tc.id);
+      pendingIdxs.forEach(i => { if (selectedKeys.has(`${tc.id}__${i}`)) checked++; });
+      if (checked === pendingTotal && pendingTotal > 0) fullyCheckedCaseIds.push(tc.id);
       else if (checked > 0) partiallyCheckedCaseIds.push(tc.id);
     });
 
@@ -23563,13 +23579,20 @@
     try {
       // 일괄 업데이트
       for (const cid of fullyCheckedCaseIds) {
-        await setDoc(doc(db, 'cases', cid), {
+        // (v55) 완료 처리 시 해당 케이스의 모든 행을 uploaded:true로 기록 (행 단위 추적 → 추가요청 병합 후 재업로드 시 중복 방지)
+        const _tc = targets.find(t => t.id === cid);
+        const _rows = (_tc && Array.isArray(_tc.erpPartsRows))
+          ? _tc.erpPartsRows.map(r => (r.uploaded === true ? r : { ...r, uploaded: true }))
+          : null;
+        const _payload = {
           erpPartsUploaded: true,
           erpPartsReadyForUpload: false,
           erpPartsUploadedAt: serverTimestamp(),
           erpPartsUploadedBy: NAS_USER || '관리자',
           updatedAt: serverTimestamp()
-        }, { merge: true });
+        };
+        if (_rows) _payload.erpPartsRows = _rows;
+        await setDoc(doc(db, 'cases', cid), _payload, { merge: true });
 
         // (v18) dashAllCases 캐시도 즉시 옵티미스틱 갱신 — onSnapshot 도착 전 화면 반영
         if (Array.isArray(window.dashAllCases)) {
@@ -25257,7 +25280,13 @@
         packaging: [], packagingDetails: [], packagingMaterials: [],  // 포장재는 원본 유지, 중복 방지
       };
       const addRows = (typeof dashBuildErpPartsRows === 'function') ? dashBuildErpPartsRows(addReqForRows) : [];
-      const mergedErpRows = [...(Array.isArray(origin.erpPartsRows) ? origin.erpPartsRows : []), ...addRows];
+      // (v55) ERP 중복 업로드 방지: 원본의 기존 행은 "이미 업로드됨"으로 표시(원본이 이미 업로드된 경우),
+      //   추가분 행만 uploaded:false → 업로드 큐엔 추가분만 떠서 원본 부품 재업로드(중복) 안 됨.
+      const _origUploaded = (origin.erpPartsUploaded === true);
+      const _origRows = (Array.isArray(origin.erpPartsRows) ? origin.erpPartsRows : [])
+        .map(r => ({ ...r, uploaded: (r.uploaded === true) || _origUploaded }));
+      const _addRowsTagged = addRows.map(r => ({ ...r, uploaded: false }));
+      const mergedErpRows = [..._origRows, ..._addRowsTagged];
 
       // 4) 원본 케이스 갱신 — 부품 병합 + ERP 재업로드 대기로 전환
       const originHist = Array.isArray(origin.statusHistory) ? origin.statusHistory : [];
