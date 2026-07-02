@@ -5019,7 +5019,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v56';
+  const APP_VERSION = 'v57';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -21059,10 +21059,14 @@
   function dashErpFieldRow(field, docId) {
     const val = field.value || '';
     const isEmpty = !val || val === '-';
+    // (v57) 사용부품·포장재 수량 배지 — 복사 값(품목명)엔 안 섞이게 표시만 함
+    const qtyBadge = (field.qty != null)
+      ? ` <span style="display:inline-block;margin-left:6px;background:#fef3c7;color:#92400e;border:1px solid #fcd34d;border-radius:6px;padding:1px 9px;font-size:14px;font-weight:800;vertical-align:middle;">수량 ${escapeHtml(String(field.qty))}</span>`
+      : '';
     return `
       <div style="display:grid;grid-template-columns:140px 1fr auto;gap:10px;align-items:center;padding:11px 12px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;">
         <div style="font-size:15px;font-weight:800;color:#374151;">${escapeHtml(field.label)}</div>
-        <div style="font-size:15px;font-weight:600;color:${isEmpty ? '#9ca3af' : '#111827'};font-family:${field.mono ? 'monospace' : 'inherit'};word-break:break-all;">${escapeHtml(val || '(비어있음)')}</div>
+        <div style="font-size:15px;font-weight:600;color:${isEmpty ? '#9ca3af' : '#111827'};font-family:${field.mono ? 'monospace' : 'inherit'};word-break:break-all;">${escapeHtml(val || '(비어있음)')}${qtyBadge}</div>
         <button type="button" data-erp-copy="${docId}" data-copy-value="${escapeHtml(val)}" style="padding:6px 12px;background:#eff6ff;color:#1e40af;border:1px solid #bfdbfe;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;${isEmpty ? 'opacity:0.4;pointer-events:none;' : ''}">📋 복사</button>
       </div>
     `;
@@ -21258,9 +21262,11 @@
         if (typeof p === 'string') partName = p;
         else if (p && typeof p === 'object') partName = p.name || p.partName || '';
         if (partName) {
+          const qty = (typeof p === 'object') ? (Number(p.qty || p.quantity) || 1) : 1;
           fields.push({
             label: `사용부품${idx + 1}`,
             value: partName,
+            qty,   // (v57) 전산작업 화면에 수량 표시 — 사용부품 업로드(판매조회)와 수량 일치시키기 위함
             mono: false,
             multiline: false
           });
@@ -21271,14 +21277,23 @@
     // 포장재 — 새상품 완료 케이스에서 packagingMaterials/packaging 배열 표시
     const packagingList = Array.isArray(c.packagingMaterials) ? c.packagingMaterials
       : Array.isArray(c.packaging) ? c.packaging : [];
+    // (v57) 포장재 수량 조회용 — packagingDetails에 이름별 qty가 있음
+    const _pkgQtyByName = {};
+    (Array.isArray(c.packagingDetails) ? c.packagingDetails : []).forEach(d => {
+      if (d && d.name) _pkgQtyByName[d.name] = Number(d.qty) || 1;
+    });
     packagingList.forEach((p, idx) => {
       let packName = '';
       if (typeof p === 'string') packName = p;
       else if (p && typeof p === 'object') packName = p.name || p.packName || '';
       if (packName) {
+        const qty = (typeof p === 'object' && (p.qty || p.quantity))
+          ? (Number(p.qty || p.quantity) || 1)
+          : (_pkgQtyByName[packName] || 1);
         fields.push({
           label: `포장재${idx + 1}`,
           value: packName,
+          qty,   // (v57) 수량 표시
           mono: false,
           multiline: false
         });
