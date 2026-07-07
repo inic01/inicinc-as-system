@@ -5019,7 +5019,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v57';
+  const APP_VERSION = 'v59';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -9661,7 +9661,8 @@
           ${checkboxCell}
           <td style="padding:9px 10px;color:#6b7280;font-size:12px;white-space:nowrap;">${tStr}</td>
           <td style="padding:9px 10px;font-family:monospace;font-size:12px;">${escapeHtml(r.caseId || '-')}</td>
-          <td style="padding:9px 10px;font-size:12px;word-break:break-all;">${escapeHtml(r.fileName || '-')}${(r.retryCount && r.retryCount > 1) ? ' <span style="color:#dc2626;font-size:11px;font-weight:700;">(재시도 ' + r.retryCount + '회)</span>' : ''}</td>
+          <td style="padding:9px 10px;font-size:12px;word-break:break-all;">${escapeHtml(r.fileName || '-')}${(r.fileSize && r.fileSize > 0) ? ' <span style="color:#9ca3af;font-size:11px;">(' + (r.fileSize/1048576).toFixed(1) + 'MB)</span>' : ''}${(r.retryCount && r.retryCount > 1) ? ' <span style="color:#dc2626;font-size:11px;font-weight:700;">(재시도 ' + r.retryCount + '회)</span>' : ''}</td>
+          <td style="padding:9px 10px;font-size:12px;color:#b91c1c;word-break:break-all;">${escapeHtml(r.errorReason || (r.httpStatus ? ('HTTP ' + r.httpStatus) : '원인 미기록'))}</td>
           <td style="padding:9px 10px;font-size:13px;">${escapeHtml(uploaderName)}</td>
           <td style="padding:9px 10px;text-align:center;">${statusBadge}</td>
           <td style="padding:9px 10px;text-align:right;">${actionBtn}</td>
@@ -9681,6 +9682,7 @@
             <th style="background:#f8fafc;padding:9px 10px;text-align:left;font-size:11px;font-weight:600;color:#6b7280;border-bottom:1px solid #e5e7eb;">시각</th>
             <th style="background:#f8fafc;padding:9px 10px;text-align:left;font-size:11px;font-weight:600;color:#6b7280;border-bottom:1px solid #e5e7eb;">케이스</th>
             <th style="background:#f8fafc;padding:9px 10px;text-align:left;font-size:11px;font-weight:600;color:#6b7280;border-bottom:1px solid #e5e7eb;">파일명</th>
+            <th style="background:#f8fafc;padding:9px 10px;text-align:left;font-size:11px;font-weight:600;color:#6b7280;border-bottom:1px solid #e5e7eb;">실패 원인</th>
             <th style="background:#f8fafc;padding:9px 10px;text-align:left;font-size:11px;font-weight:600;color:#6b7280;border-bottom:1px solid #e5e7eb;">업로더</th>
             <th style="background:#f8fafc;padding:9px 10px;text-align:center;font-size:11px;font-weight:600;color:#6b7280;border-bottom:1px solid #e5e7eb;">상태</th>
             <th style="background:#f8fafc;padding:9px 10px;text-align:right;font-size:11px;font-weight:600;color:#6b7280;border-bottom:1px solid #e5e7eb;">작업</th>
@@ -26340,9 +26342,13 @@
         formData.append('file', renamedFile);
 
         const resp = await fetch('./upload_proxy.php', { method: 'POST', body: formData });
-        const result = await resp.json();
+        // (v59) 실패 원인 진단용 — HTTP status·응답 본문을 확보한 뒤 판정
+        const httpStatus = resp.status;
+        const rawText = await resp.text().catch(() => '');
+        let result = null;
+        try { result = JSON.parse(rawText); } catch(_) {}
 
-        if (result.success) {
+        if (result && result.success) {
           successCount++;
           results.push({
             autoName: item.autoName,
@@ -26350,11 +26356,35 @@
             nasPath: `${uploadPath}/${item.autoName}`
           });
         } else {
-          results.push({ autoName: item.autoName, success: false });
+          // 원인 추정 (엔지니어가 F12 안 봐도 로그에 남게)
+          const sizeMB = item.file ? (item.file.size / 1048576) : 0;
+          let reason;
+          if (httpStatus === 413) reason = `파일 용량 초과(${sizeMB.toFixed(1)}MB) — 서버 PHP post_max_size/upload_max_filesize 상향 필요`;
+          else if (httpStatus === 504 || httpStatus === 408) reason = '업로드 타임아웃 — 서버 max_execution_time 상향 필요';
+          else if (httpStatus >= 500) reason = `서버 오류 (HTTP ${httpStatus})`;
+          else if (httpStatus === 401 || httpStatus === 403) reason = '권한/로그인 만료 (NAS SID)';
+          else if (result && result.error) reason = `NAS 오류코드 ${JSON.stringify(result.error)}`;
+          else if (!resp.ok) reason = `HTTP ${httpStatus}`;
+          else reason = '알 수 없음 (응답 파싱 실패)';
+          results.push({
+            autoName: item.autoName,
+            success: false,
+            httpStatus,
+            fileSize: item.file ? item.file.size : 0,
+            errorReason: reason,
+            errorDetail: (rawText || (result ? JSON.stringify(result) : '')).slice(0, 300)
+          });
         }
       } catch(e) {
         console.error('업로드 에러:', item.autoName, e);
-        results.push({ autoName: item.autoName, success: false });
+        results.push({
+          autoName: item.autoName,
+          success: false,
+          httpStatus: 0,
+          fileSize: item.file ? item.file.size : 0,
+          errorReason: '네트워크/요청 실패 — ' + (e.message || e),
+          errorDetail: String(e.message || e).slice(0, 300)
+        });
       }
     }
 
@@ -26367,8 +26397,10 @@
     } else if (successCount > 0) {
       statusEl.classList.remove('uploading');
       statusEl.classList.add('error');
-      statusEl.textContent = `⚠️ ${successCount}/${allAttachments.length}개만 업로드됨. 일부 실패.`;
-      return { ok: true, uploadedFiles: results, message: '일부 성공' };
+      statusEl.textContent = `⚠️ ${successCount}/${allAttachments.length}개만 업로드됨. 실패 파일이 있습니다.`;
+      // (v58) 버그 수정: 일부 실패도 ok:false로 반환해야 실패 로그 기록 + 재시도 모달이 뜬다.
+      //   (기존엔 ok:true라 실패한 영상이 로그에도 안 남고 조용히 누락된 채 접수됐음)
+      return { ok: false, uploadedFiles: results, message: '일부 실패' };
     } else {
       statusEl.classList.remove('uploading');
       statusEl.classList.add('error');
@@ -29484,6 +29516,10 @@
               uploader: NAS_USER || '(미확인)',
               fileName: f.autoName || '',
               errorType: 'upload_failed',
+              errorReason: f.errorReason || '',
+              errorDetail: f.errorDetail || '',
+              httpStatus: f.httpStatus != null ? f.httpStatus : '',
+              fileSize: f.fileSize || 0,
               retryCount: prevTries + 1,
               createdAt: serverTimestamp(),
               resolved: false
