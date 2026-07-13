@@ -5019,7 +5019,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v62';
+  const APP_VERSION = 'v64';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -21197,8 +21197,39 @@
       extraDefects.push(dPartStr ? `${dName}- ${dPartStr}` : `${dName}- 확인필요`);
     }
 
+    // (v64) 첫 줄에 담당자 표시 — 소통내역 없이 해피콜완료돼도 누가 응대했는지 남도록.
+    //   해피콜 담당자가 중간에 바뀐 경우 "최초 → 최종"만 표기(중간 생략) → ERP 복붙 시 깔끔.
+    //   예) 엔지니어/해피콜: 기보선 / 김상아(최초) → 장은희(완료)
+    //       한 명이면  → 엔지니어/해피콜: 기보선 / 김상아
+    const _disp = (v) => (window.getDisplayName ? window.getDisplayName(v) : (v || '')) || '';
+    const _engName = _disp(c.engineer);
+
+    // 이력에서 해피콜 역할로 액션한 사람들을 순서대로 수집 (연속 중복 제거)
+    const _hcSeq = [];
+    (Array.isArray(c.statusHistory) ? c.statusHistory : []).forEach(h => {
+      if (h && h.role === 'happycall' && h.changedBy) {
+        if (_hcSeq[_hcSeq.length - 1] !== h.changedBy) _hcSeq.push(h.changedBy);
+      }
+    });
+    // 이력이 없으면 현재 담당자 필드로 대체
+    if (_hcSeq.length === 0 && c.happycallStaff) _hcSeq.push(c.happycallStaff);
+
+    let _hcText;
+    if (_hcSeq.length === 0) {
+      _hcText = '해피콜 미지정';
+    } else if (_hcSeq.length === 1) {
+      _hcText = _disp(_hcSeq[0]);
+    } else {
+      // 최초 → 최종 (중간 담당자는 생략)
+      _hcText = `${_disp(_hcSeq[0])}(최초) → ${_disp(_hcSeq[_hcSeq.length - 1])}(완료)`;
+    }
+
+    const _headLine = (_engName || _hcSeq.length > 0)
+      ? `엔지니어/해피콜: ${_engName || '-'} / ${_hcText}`
+      : '엔지니어/해피콜';
+
     const lines = [
-      '엔지니어/해피콜',
+      _headLine,
       `1.입고 품목: ${intakeItems}`,
       `2.입고일: ${intakeDateText}`,
       `3.처리내용: ${treatmentText}${noteBlockText ? '\n\n' + noteBlockText : ''}`,
