@@ -5019,7 +5019,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v59';
+  const APP_VERSION = 'v62';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -25149,8 +25149,8 @@
         defect: { name1:'', part1:'', name2:'', part2:'', name3:'', part3:'', name4:'', part4:'', name5:'', part5:'', list: [] },
         treatmentContent: treatmentContent || '',
         notes: notesContent || '',
-        partsUsed: selectedParts.map(p => ({ code: p.code, name: p.name, price: p.price, qty: p.qty, amount: p.price * p.qty })),
-        partsTotal: selectedParts.reduce((s, p) => s + p.price * p.qty, 0),
+        partsUsed: selectedParts.map(p => ({ code: p.code, name: p.name, price: p.price, qty: p.qty, amount: window._partAmount(p), ...(p.amountOverride != null && !isNaN(p.amountOverride) ? { amountEdited: true } : {}) })),
+        partsTotal: selectedParts.reduce((s, p) => s + window._partAmount(p), 0),
         packaging: selectedPackaging.slice(),
         packagingDetails: selectedPackaging.map(name => {
           const found = (window._adminPackaging || []).find(p => p.name === name);
@@ -26911,6 +26911,10 @@
         }
       }
     }
+    // (v62) picker 선택이 바뀌면 처리내용 스크립트 추천 칩도 갱신 (picker는 input.value를 안 써서 별도 호출 필요)
+    if (typeof window.refreshTreatmentScriptChips === 'function') {
+      try { window.refreshTreatmentScriptChips(); } catch (e) {}
+    }
   }
 
   // 외부 클릭 시 picker 닫기 (드래그 안전 처리)
@@ -27542,25 +27546,27 @@
     const chipsEl = document.getElementById('treatmentScriptChips');
     if (!wrap || !chipsEl) return;
 
-    // 현재 폼의 불량명1 / 부품1 / 카테고리 / 제품 수집
-    const cat  = document.getElementById('category')?.value?.trim() || '';
+    // (v62) 카테고리는 productCategory(hidden), 불량명·부품은 picker 상태(_defectPickState[1])에서 읽는다.
+    //   기존 버그: id='category'(존재 안 함) + defect1Part.value(picker가 비워둠)를 읽어 항상 매칭 실패했음.
+    const cat  = document.getElementById('productCategory')?.value?.trim() || '';
     const prod = document.getElementById('productName')?.value?.trim() || '';
-    const def  = document.getElementById('defect1Name')?.value?.trim() || '';
-    const part = document.getElementById('defect1Part')?.value?.trim() || '';
+    const st   = (window._defectPickState && window._defectPickState[1]) || { name: '', parts: [] };
+    const def  = (st.name || document.getElementById('defect1Name')?.value || '').trim();
+    const partsArr = Array.isArray(st.parts) ? st.parts.map(p => (p || '').trim()).filter(Boolean) : [];
 
-    if (!cat || !prod || !def || !part) {
+    if (!cat || !prod || !def || partsArr.length === 0) {
       wrap.style.display = 'none';
       chipsEl.innerHTML = '';
       return;
     }
 
-    // 정확히 그 조합만 매칭 (다른 카테고리/제품 무관)
+    // 정확히 그 조합만 매칭 — 선택된 불량부품 중 하나가 스크립트 부품과 일치
     const scripts = (window._adminTreatmentScripts || []).filter(s =>
       s.active !== false &&
       s.category === cat &&
       s.product === prod &&
       s.defectName === def &&
-      s.partName === part
+      partsArr.includes((s.partName || '').trim())
     );
 
     if (scripts.length === 0) {
@@ -27947,7 +27953,7 @@
 
     // 없으면 추가 — 부품 + 택배비 포함 실시간 계산
     const parts = (typeof window._formGetSelectedParts === 'function') ? window._formGetSelectedParts() : [];
-    const partsTotal = parts.reduce((sum, p) => sum + (p.price || 0) * (p.qty || 1), 0);
+    const partsTotal = parts.reduce((sum, p) => sum + (window._partAmount ? window._partAmount(p) : ((p.price || 0) * (Number(p.qty) || 1))), 0);
     const deliveryFee = parseInt(document.getElementById('deliveryFee')?.value || '0') || 0;
     const total = partsTotal + deliveryFee;
     const totalStr = total > 0 ? `${total.toLocaleString()}원` : '금액 미정';
@@ -27990,6 +27996,13 @@
   }
 
   // 수량 테이블 렌더링 (사용부품 + 택배비 통합 합계)
+  // (v61) 청구 금액 = 엔지니어가 수정한 값(amountOverride)이 있으면 그 값, 없으면 단가×수량.
+  //   수량(qty)은 실제 소모 그대로 → 재고·ERP엔 영향 없음. 금액만 조정(불량 1개 청구제외 등).
+  window._partAmount = function(p) {
+    if (p && p.amountOverride != null && !isNaN(p.amountOverride)) return Number(p.amountOverride);
+    return (Number(p && p.price) || 0) * (Number(p && p.qty) || 0);
+  };
+
   function renderQtyTable() {
     // 현재 선택된 택배비 (0이면 미선택)
     const feeVal = parseInt(document.getElementById('deliveryFee').value || '0');
@@ -28025,7 +28038,9 @@
 
     // 부품 행
     selectedParts.forEach(p => {
-      const amount = p.price * p.qty;
+      const autoAmount = p.price * p.qty;
+      const amount = window._partAmount(p);          // (v61) 수정값 우선, 없으면 단가×수량
+      const isEdited = (amount !== autoAmount);
       totalAmount += amount;
       // (v18) 부품 위치 — _adminParts에서 rack 필드 조회
       let rackTxt = '';
@@ -28046,7 +28061,12 @@
             <button type="button" data-action="inc" data-code="${escapeHtml(p.code)}">+</button>
           </span>
         </div>
-        <div class="qty-amount">${formatPrice(amount)}</div>
+        <div class="qty-amount" style="text-align:right;">
+          <span style="display:inline-flex;align-items:center;gap:2px;justify-content:flex-end;">
+            <input type="number" min="0" step="100" value="${amount}" data-amtcode="${escapeHtml(p.code)}" title="청구 금액 (필요시 직접 수정 — 수량·재고·ERP엔 영향 없음)" style="width:82px;text-align:right;border:1.5px solid ${isEdited ? '#f59e0b' : '#d1d5db'};border-radius:5px;padding:3px 6px;font-size:13px;${isEdited ? 'background:#fffbeb;font-weight:700;color:#b45309;' : ''}">원
+          </span>
+          ${isEdited ? `<div style="font-size:10px;color:#b45309;">정가 ${formatPrice(autoAmount)}원 → 청구 ${formatPrice(amount)}원</div>` : ''}
+        </div>
       </div>`;
     });
 
@@ -28137,6 +28157,20 @@
         else if (action === 'dec' && part.qty > 1) part.qty--;
         renderQtyTable();
       });
+    });
+    // (v61) 청구 금액 직접 수정 — 엔지니어가 청구액 조정(불량 1개 청구제외 등). 수량·재고·ERP엔 영향 없음.
+    partsQtyTableEl.querySelectorAll('input[data-amtcode]').forEach(input => {
+      const commitAmt = () => {
+        const part = selectedParts.find(p => p.code === input.dataset.amtcode);
+        if (!part) return;
+        let v = parseInt(input.value);
+        if (isNaN(v) || v < 0) v = 0;
+        const auto = part.price * part.qty;
+        part.amountOverride = (v === auto) ? null : v;   // 자동값과 같으면 수정 해제(정가 복귀)
+        renderQtyTable();
+      };
+      input.addEventListener('change', commitAmt);
+      input.addEventListener('blur', commitAmt);
     });
     // 수량 직접 입력 (v16: input 중에는 값만 저장, blur/change 시 재렌더링)
     partsQtyTableEl.querySelectorAll('input[type="number"]').forEach(input => {
@@ -29090,7 +29124,8 @@
         name: p.name || '',
         price: Number(p.price) || 0,
         qty: Number(p.qty) || 1,
-        amount: (Number(p.price) || 0) * (Number(p.qty) || 1)
+        amount: window._partAmount(p),
+        ...(p.amountOverride != null && !isNaN(p.amountOverride) ? { amountEdited: true } : {})
       }));
       data.partsTotal = data.partsUsed.reduce((sum, p) => sum + p.amount, 0);
     }
@@ -29628,10 +29663,11 @@
           name: p.name,
           price: p.price,
           qty: p.qty,
-          amount: p.price * p.qty
+          amount: window._partAmount(p),
+          ...(p.amountOverride != null && !isNaN(p.amountOverride) ? { amountEdited: true } : {})
         })),
-        // 사용부품 합계
-        partsTotal: selectedParts.reduce((sum, p) => sum + p.price * p.qty, 0),
+        // 사용부품 합계 (청구) — 금액 수정분 반영
+        partsTotal: selectedParts.reduce((sum, p) => sum + window._partAmount(p), 0),
         // 사용포장재 (4단계) — 이름 배열 (호환) + 상세 정보 배열 (신규)
         // packaging: ["1호 박스", ...]  // 호환용 — 기존 시스템·NAS·ERP 그대로 작동
         // packagingDetails: [{name, price, qty, amount, type}, ...]  // 단가/수량/금액 정보
