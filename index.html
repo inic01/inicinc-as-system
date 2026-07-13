@@ -2107,6 +2107,7 @@
   }
   .card-status-label.status-수리진행중 { background: #fef3c7; color: #78350f; }
   .card-status-label.status-해피콜부재 { background: #fee2e2; color: #991b1b; }
+  .card-status-label.status-추가회수진행 { background: #cffafe; color: #0e7490; }
   .card-status-label.status-입금예정   { background: #ddd6fe; color: #5b21b6; }
   .card-status-label.status-민원       { background: #fee2e2; color: #b91c1c; font-weight: 800; }
   .card-status-label.status-재검수요청 { background: #fde68a; color: #92400e; }
@@ -5019,7 +5020,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v64';
+  const APP_VERSION = 'v66';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -15157,13 +15158,23 @@
     if (role === 'master') return true;
 
     const stage = c.stage || '';
-    const isHappycallTeam = (team === '해피콜팀' || role === 'happycall');
+    // (v65) 해피콜 조장(happycall_grouplead)도 해피콜팀으로 인정 — 해피콜대기·입금대기 액션 가능
+    const isHappycallTeam = (team === '해피콜팀' || role === 'happycall' || role === 'happycall_grouplead');
     const isEngineerSide = !isHappycallTeam; // engineer / qa / 비-해피콜팀 조장·파트장
     const isLeaderUp = ['partlead', 'teamlead', 'grouplead'].includes(role);
     const isExchangeReturn = (c.type === '교환' || c.type === '반품');
 
     if (stage === '수리대기') {
-      // 엔지니어 영역 — 해피콜팀은 누구든 불가
+      // 엔지니어 영역 — 해피콜팀은 원칙적으로 불가.
+      // (v65) 단, 해피콜 조장(happycall_grouplead)은 "입금완료로 넘어온" 수리대기 건에 한해 허용.
+      //   → 입금 확인 후 남은 마무리를 조장이 [수리완료]로 처리할 수 있게 함.
+      //   재검수요청으로 돌아온 건은 엔지니어가 답변해야 하므로 계속 차단(흐름 보호).
+      if (role === 'happycall_grouplead') {
+        const toRepair = (Array.isArray(c.statusHistory) ? c.statusHistory : [])
+          .filter(h => h && h.toStage === '수리대기');
+        const last = toRepair[toRepair.length - 1];
+        return !!(last && last.action === '입금완료');
+      }
       return isEngineerSide;
     }
     if (stage === '입금대기' || stage === '해피콜대기') {
@@ -18414,6 +18425,7 @@
           { value: '해피콜부재', label: '해피콜부재', desc: absenceDesc, isAction: false, needsNote: false },
           { value: '확인중', label: '확인중', desc: '통화 완료, 추가 확인 진행 중', isAction: false, needsNote: false },
           { value: '유선예약요청', label: '유선예약요청', desc: '고객이 특정 시간에 재연락 요청', isAction: false, needsNote: false },
+          { value: '추가회수진행', label: '추가회수진행', desc: '추가 회수품목 회수를 진행 중', isAction: false, needsNote: false },
         ];
       }
       if (stage === '입금대기') {
