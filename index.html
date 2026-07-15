@@ -5020,7 +5020,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v68';
+  const APP_VERSION = 'v71';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -15168,14 +15168,17 @@
     const isHappycallTeam = (team === '해피콜팀' || role === 'happycall' || role === 'happycall_grouplead');
     const isEngineerSide = !isHappycallTeam; // engineer / qa / 비-해피콜팀 조장·파트장
     const isLeaderUp = ['partlead', 'teamlead', 'grouplead'].includes(role);
+    // (v71) "해피콜팀 조장"을 등록 방식과 무관하게 인정:
+    //   역할이 happycall_grouplead 이거나, 소속이 해피콜팀 + 역할이 grouplead(조장)인 경우.
+    const isHappycallGrouplead = (role === 'happycall_grouplead') || (team === '해피콜팀' && role === 'grouplead');
     const isExchangeReturn = (c.type === '교환' || c.type === '반품');
 
     if (stage === '수리대기') {
       // 엔지니어 영역 — 해피콜팀은 원칙적으로 불가.
-      // (v65) 단, 해피콜 조장(happycall_grouplead)은 "입금완료로 넘어온" 수리대기 건에 한해 허용.
+      // (v65/v71) 단, 해피콜팀 조장은 "입금완료로 넘어온" 수리대기 건에 한해 허용.
       //   → 입금 확인 후 남은 마무리를 조장이 [수리완료]로 처리할 수 있게 함.
       //   재검수요청으로 돌아온 건은 엔지니어가 답변해야 하므로 계속 차단(흐름 보호).
-      if (role === 'happycall_grouplead') {
+      if (isHappycallGrouplead) {
         const toRepair = (Array.isArray(c.statusHistory) ? c.statusHistory : [])
           .filter(h => h && h.toStage === '수리대기');
         const last = toRepair[toRepair.length - 1];
@@ -25905,6 +25908,59 @@
       }
     }
 
+    // (v69) 수정모드에서도 첨부파일(회수품목·불량·정상 영상)을 NAS에 업로드하고 저장한다.
+    //   기존 버그: dashSubmitEditMode는 setDoc만 하고 업로드/attachments 저장이 없어,
+    //   [수리정보 불러오기]로 새로 붙인 파일이 NAS에 안 올라가고 그대로 사라졌음.
+    //   수정폼엔 기존 첨부를 안 불러오므로, 새로 올린 것만 기존 attachments에 "병합"(원본 보존).
+    try {
+      const _formAtts = (typeof getAllAttachments === 'function') ? getAllAttachments() : [];
+      if (_formAtts.length > 0) {
+        let upRes = await uploadFilesToNAS();
+        while (!upRes.ok) {
+          try { if (typeof markAttachmentsUploaded === 'function') markAttachmentsUploaded(upRes.uploadedFiles); } catch(e) {}
+          const failed = upRes.uploadedFiles.filter(r => !r.success);
+          try {
+            for (const f of failed) {
+              const safeKey = ((caseId || 'NOID') + '__' + (f.autoName || 'NONAME')).replace(/[\/\\\s'"#?]+/g, '_').slice(0, 180);
+              const ref = doc(db, 'uploadFailLogs', safeKey);
+              let prevTries = 0;
+              try { const prev = await getDoc(ref); if (prev.exists()) prevTries = prev.data().retryCount || 0; } catch(e) {}
+              await setDoc(ref, {
+                caseId: caseId || '(미발급)', uploader: NAS_USER || '(미확인)', fileName: f.autoName || '',
+                errorType: 'upload_failed', errorReason: f.errorReason || '', errorDetail: f.errorDetail || '',
+                httpStatus: f.httpStatus != null ? f.httpStatus : '', fileSize: f.fileSize || 0,
+                retryCount: prevTries + 1, createdAt: serverTimestamp(), resolved: false
+              }, { merge: true });
+            }
+          } catch(e) {}
+          const choice = await showUploadFailDialog(failed, upRes.uploadedFiles.length);
+          if (choice === 'cancel') { showToast('저장 취소됨 (첨부 업로드 실패)', 'error'); return; }
+          upRes = await uploadFilesToNAS();
+        }
+        const _uMap = {};
+        upRes.uploadedFiles.forEach(r => { _uMap[r.autoName] = r; });
+        const _newAtts = getAllAttachments().map(f => {
+          const r = _uMap[f.autoName];
+          return {
+            originalName: f.originalName, autoName: f.autoName, size: f.size, type: f.type,
+            source: f.source, defectNum: f.defectNum,
+            uploaded: !!(r && r.success), nasPath: (r && r.success) ? r.nasPath : '', shareUrl: ''
+          };
+        });
+        // 기존 첨부 + 새 첨부 병합 (autoName 기준, 새 것 우선) — 원본 유지
+        const _byName = {};
+        (Array.isArray(c.attachments) ? c.attachments : []).forEach(a => { if (a && a.autoName) _byName[a.autoName] = a; });
+        _newAtts.forEach(a => { if (a && a.autoName) _byName[a.autoName] = a; });
+        const _merged = Object.values(_byName);
+        updateData.attachments = _merged;
+        updateData.attachmentCount = _merged.length;
+      }
+    } catch(e) {
+      console.error('수정모드 첨부 업로드 실패:', e);
+      showToast('첨부 업로드 중 오류: ' + (e.message || e), 'error');
+      return;
+    }
+
     try {
       await setDoc(doc(db, 'cases', (c._docId || c.id)), updateData, { merge: true });
 
@@ -31276,6 +31332,10 @@
         erpRefundTarget: refundTarget,
         erpComponents: c.erpComponents || [],
         originalCaseId: c.id, // 원본 케이스 ID 참조
+        // (v70) 유형전환으로 만든 새 문서에도 erpPartsUploaded:false 필수.
+        //   없으면 대시보드 쿼리 where('erpPartsUploaded','==',false)에 안 잡혀
+        //   교환/반품이 대시보드·ERP작업에서 사라짐 (v49는 신규접수 경로만 고쳤음).
+        erpPartsUploaded: false,
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp()
       };
