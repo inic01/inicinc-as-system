@@ -3607,6 +3607,12 @@
         <span class="menu-icon">📋</span>
         <span>ERP 작업</span>
       </div>
+      <!-- (v74) 입금내역 - 법인폰 입금문자 자동수신 → 입금대기 매칭 -->
+      <div class="dash-menu-item" data-menu="deposit" id="dashMenuDeposit" onclick="dashShowMenu('deposit')" style="display:none;">
+        <span class="menu-icon">💰</span>
+        <span>입금내역</span>
+        <span class="menu-badge" id="depositMenuBadge" style="display:none;"></span>
+      </div>
       <!-- (v13) 새상품 내역 - 추후 시스템 제작 후 채움 -->
       <div class="dash-menu-item" data-menu="newproduct" id="dashMenuNewProduct" onclick="dashShowMenu('newproduct')">
         <span class="menu-icon">🆕</span>
@@ -3863,6 +3869,13 @@
     <div id="dashViewErpWork" class="dash-view" style="display:none;">
       <div id="erpWorkContent">
         <!-- 동적으로 채워짐 — renderErpWork() -->
+      </div>
+    </div>
+
+    <!-- (v74) 입금내역 view -->
+    <div id="dashViewDeposit" class="dash-view" style="display:none;">
+      <div id="depositContent">
+        <!-- 동적으로 채워짐 — renderDeposit() -->
       </div>
     </div>
 
@@ -5020,7 +5033,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v72';
+  const APP_VERSION = 'v75';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -5880,6 +5893,13 @@
     const canSeeErpWork = ['master', 'partlead', 'teamlead', 'grouplead'].includes(userRole) || isAnyHappycall;
     const erpWorkMenu = document.getElementById('dashMenuErpWork');
     if (erpWorkMenu) erpWorkMenu.style.display = canSeeErpWork ? '' : 'none';
+
+    // (v74) 입금내역 메뉴 노출 — ERP 작업과 동일 대상(해피콜팀 + 조장/파트장/팀장/마스터)
+    const canSeeDeposit = canSeeErpWork;
+    const depositMenu = document.getElementById('dashMenuDeposit');
+    if (depositMenu) depositMenu.style.display = canSeeDeposit ? '' : 'none';
+    // 로그인 직후부터 배지 숫자가 살아있도록 구독 시작
+    if (canSeeDeposit && typeof window.startDepositWatch === 'function') window.startDepositWatch();
 
     // (v13) 완료 접수내역 메뉴 노출 — 마스터/팀장/파트장/조장 + 해피콜팀
     const canSeeCompleted = true; // 모든 역할 가능
@@ -6999,6 +7019,15 @@
       if (ewView) {
         ewView.style.display = '';
         if (typeof window.renderErpWork === 'function') window.renderErpWork();
+      }
+    } else if (menu === 'deposit') {
+      // (v74) 입금내역 — 법인폰 입금문자 자동수신 → 입금대기 매칭
+      titleEl.textContent = '💰 입금내역';
+      subtitleEl.textContent = '법인폰 입금문자 자동수신 → 입금대기 건 자동 매칭 (확인 후 클릭)';
+      const dpView = document.getElementById('dashViewDeposit');
+      if (dpView) {
+        dpView.style.display = '';
+        if (typeof window.renderDeposit === 'function') window.renderDeposit();
       }
     } else if (menu === 'completedlist') {
       // (v13) 완료 접수내역 — 둘 다 완료된 케이스 누적
@@ -21035,15 +21064,24 @@
       <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:14px 16px;margin-bottom:16px;display:grid;grid-template-columns:1fr 1fr;gap:12px;">
         <div>
           <div style="color:#1e40af;font-size:11px;font-weight:600;margin-bottom:4px;">고객명</div>
-          <div style="font-size:16px;font-weight:800;color:#111827;">${escapeHtml(customer.name || '-')}</div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-size:16px;font-weight:800;color:#111827;">${escapeHtml(customer.name || '-')}</span>
+            <button type="button" data-erp-copy="${docId}" data-copy-value="${escapeHtml(customer.name || '')}" style="padding:4px 10px;background:#dbeafe;color:#1e40af;border:1px solid #bfdbfe;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;${!customer.name ? 'opacity:0.4;pointer-events:none;' : ''}">📋 복사</button>
+          </div>
         </div>
         <div>
           <div style="color:#1e40af;font-size:11px;font-weight:600;margin-bottom:4px;">연락처</div>
-          <div style="font-size:15px;font-weight:700;color:#111827;font-family:monospace;">${escapeHtml(customer.phone || '-')}</div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-size:15px;font-weight:700;color:#111827;font-family:monospace;">${escapeHtml(customer.phone || '-')}</span>
+            <button type="button" data-erp-copy="${docId}" data-copy-value="${escapeHtml(customer.phone || '')}" style="padding:4px 10px;background:#dbeafe;color:#1e40af;border:1px solid #bfdbfe;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;${!customer.phone ? 'opacity:0.4;pointer-events:none;' : ''}">📋 복사</button>
+          </div>
         </div>
         <div style="grid-column:1/-1;">
           <div style="color:#1e40af;font-size:11px;font-weight:600;margin-bottom:4px;">제품군</div>
-          <div style="font-size:14px;font-weight:700;color:#374151;">${escapeHtml(product.name || '-')}</div>
+          <div style="display:flex;align-items:center;gap:8px;">
+            <span style="font-size:14px;font-weight:700;color:#374151;">${escapeHtml(product.name || '-')}</span>
+            <button type="button" data-erp-copy="${docId}" data-copy-value="${escapeHtml(product.name || '')}" style="padding:4px 10px;background:#dbeafe;color:#1e40af;border:1px solid #bfdbfe;border-radius:6px;font-size:11px;font-weight:700;cursor:pointer;${!product.name ? 'opacity:0.4;pointer-events:none;' : ''}">📋 복사</button>
+          </div>
         </div>
       </div>
 
@@ -24866,6 +24904,236 @@
         } : {})
       }
     });
+  }
+
+  // ==================== (v74) 입금내역 — 법인폰 입금문자 자동수신 → 입금대기 매칭 ====================
+  // 데이터: Firestore 'incomingDeposits' 컬렉션 (법인폰 입금문자 → Cloud Function이 파싱 저장)
+  //   { name, amount, bank, smsTime, rawText, receivedAt, status:'new'|'done'|'ignored', matchedCaseId, handledBy, handledAt }
+  // 흐름(반자동): 문자 수신 → 카드로 뜸 → 성함+금액 자동 매칭 → 해피콜이 확인 후 [입금완료] 클릭
+  window._depositUnsub = null;
+  window._depositDocs = window._depositDocs || [];
+  window._depShowSample = window._depShowSample || false;
+
+  // 케이스의 청구 총액(입금해야 할 금액) — dashBuildErpTreatmentText의 grandTotal 공식과 동일
+  window._caseExpectedAmount = function(c) {
+    let total = 0;
+    const parts = Array.isArray(c.partsUsed) ? c.partsUsed : [];
+    parts.forEach(p => {
+      if (p && typeof p === 'object') {
+        if (p.amount != null && !isNaN(p.amount)) total += Number(p.amount);
+        else total += (Number(p.price || p.unitPrice || 0)) * (Number(p.qty || p.quantity || 1));
+      }
+    });
+    if (c.visitFee) total += Number(c.visitFee) || 0;
+    if (c.extraFee) total += Number(c.extraFee) || 0;
+    total += Number(c.deliveryFee || 0);
+    return total;
+  };
+
+  function _depNorm(s) { return String(s || '').replace(/\s+/g, '').trim(); }
+  function _depPendingCases() {
+    const all = Array.isArray(window.dashAllCases) ? window.dashAllCases : [];
+    return all.filter(c => c && c.stage === '입금대기');
+  }
+  // 한 입금문자에 매칭되는 입금대기 케이스(성함 일치) 목록
+  function _depMatch(dep) {
+    const name = _depNorm(dep.name);
+    if (!name) return { byName: [] };
+    const byName = _depPendingCases().filter(c => _depNorm((c.customer || {}).name) === name);
+    return { byName };
+  }
+
+  function _depSample() {
+    return { _id: 'SAMPLE-1', _sample: true, name: '정우혁', amount: 69000, bank: '기업',
+      smsTime: '2026/07/15 13:56', rawText: '[Web발신]\n입금 69,000원 / 정우혁 / 기업', status: 'new' };
+  }
+
+  function _depUpdateBadge() {
+    const badge = document.getElementById('depositMenuBadge');
+    if (!badge) return;
+    const n = (window._depositDocs || []).filter(d => d.status !== 'done' && d.status !== 'ignored').length;
+    if (n > 0) { badge.style.display = ''; badge.textContent = n; } else badge.style.display = 'none';
+  }
+
+  // 실시간 구독 시작 (로그인 후 1회) — 배지 숫자 + 화면 자동 갱신
+  window.startDepositWatch = function() {
+    if (window._depositUnsub) return;
+    try {
+      const q = query(collection(db, 'incomingDeposits'), orderBy('receivedAt', 'desc'), limit(200));
+      window._depositUnsub = onSnapshot(q, (snap) => {
+        window._depositDocs = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
+        _depUpdateBadge();
+        const v = document.getElementById('dashViewDeposit');
+        if (v && v.style.display !== 'none') _depPaint();
+      }, (err) => { console.warn('입금내역 구독 오류:', err); });
+    } catch (e) { console.warn('입금내역 구독 실패:', e); }
+  };
+
+  window.renderDeposit = function() {
+    if (typeof window.startDepositWatch === 'function') window.startDepositWatch();
+    _depPaint();
+  };
+
+  function _depCardHtml(dep) {
+    const isSample = !!dep._sample;
+    const amt = Number(dep.amount) || 0;
+    const name = dep.name || '-';
+    const m = _depMatch(dep);
+    let matchHtml = '';
+    if (!m.byName.length) {
+      matchHtml = `<div class="dep-mline dep-none">🔍 성함·금액이 맞는 입금대기 건이 없습니다. (동명이인·미등록·다른 용도 입금일 수 있음)
+        <span class="dep-right"><button class="dep-btn dep-ignore" data-act="ignore" data-dep="${escapeHtml(dep._id)}">무시 / 보류</button></span></div>`;
+    } else {
+      matchHtml = m.byName.map(c => {
+        const exp = window._caseExpectedAmount(c);
+        const ok = (exp === amt);
+        const prod = (c.product || {}).name || '-';
+        const typeLabel = c.type === 'AS' ? '📋 유상AS' : (c.type === '교환' ? '🔄 교환' : '↩️ 반품');
+        const openId = escapeHtml(c._docId || c.id);
+        if (ok) {
+          return `<div class="dep-mline dep-ok">
+            <span class="dep-openable" data-open="${openId}" title="클릭하면 상세 카드가 열립니다">
+              <span class="dep-tb">${typeLabel}</span>
+              <span class="dep-mid">${escapeHtml(c.id)}</span>
+              <span class="dep-mprod">${escapeHtml(prod)}</span>
+              <span class="dep-mamt">청구 ${exp.toLocaleString()}원</span>
+              <span class="dep-mbadge dep-bok">✅ 금액 일치</span>
+              <span class="dep-openhint">🔎 상세</span>
+            </span>
+            <span class="dep-right">
+              <button class="dep-btn dep-done" data-act="done" data-dep="${escapeHtml(dep._id)}" data-case="${escapeHtml(c.id)}" data-exact="1">✅ 입금완료 처리</button>
+              <button class="dep-btn dep-ignore" data-act="ignore" data-dep="${escapeHtml(dep._id)}">무시</button>
+            </span></div>`;
+        }
+        const diff = amt - exp;
+        const diffTxt = diff < 0 ? `${Math.abs(diff).toLocaleString()}원 부족` : `${diff.toLocaleString()}원 초과`;
+        return `<div class="dep-mline dep-warn">
+          <span class="dep-openable" data-open="${openId}" title="클릭하면 상세 카드가 열립니다">
+            <span class="dep-tb">${typeLabel}</span>
+            <span class="dep-mid">${escapeHtml(c.id)}</span>
+            <span class="dep-mprod">${escapeHtml(prod)}</span>
+            <span class="dep-mamt">청구 <b style="color:#b45309;">${exp.toLocaleString()}원</b> / 입금 ${amt.toLocaleString()}원</span>
+            <span class="dep-mbadge dep-bwarn">⚠️ 금액 ${diffTxt}</span>
+            <span class="dep-openhint">🔎 상세</span>
+          </span>
+          <span class="dep-right">
+            <button class="dep-btn dep-warnbtn" data-act="done" data-dep="${escapeHtml(dep._id)}" data-case="${escapeHtml(c.id)}" data-exact="0">그래도 입금완료</button>
+            <button class="dep-btn dep-ignore" data-act="ignore" data-dep="${escapeHtml(dep._id)}">무시</button>
+          </span></div>`;
+      }).join('');
+    }
+    return `<div class="dep-card">
+      <div class="dep-top">
+        <span class="dep-amt">${amt.toLocaleString()}원</span>
+        <span class="dep-name">${escapeHtml(name)}</span>
+        ${isSample ? '<span class="dep-sample">예시</span>' : ''}
+        <span class="dep-meta">문자 ${escapeHtml(dep.smsTime || '-')}</span>
+      </div>
+      ${dep.rawText ? `<div class="dep-raw">${escapeHtml(dep.rawText)}</div>` : ''}
+      <div class="dep-mbox">${matchHtml}</div>
+    </div>`;
+  }
+
+  function _depStyle() {
+    return `<style>
+      .dep-info{background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:14px 16px;font-size:12.5px;color:#1e40af;line-height:1.7;margin-bottom:16px;}
+      .dep-flow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px;font-weight:700;}
+      .dep-flow .c{background:#dbeafe;border-radius:6px;padding:3px 9px;}.dep-flow .a{color:#60a5fa;}
+      .dep-toolbar{display:flex;align-items:center;gap:10px;margin:6px 0 12px;}
+      .dep-seclabel{font-size:14px;font-weight:800;color:#374151;}
+      .dep-cnt{background:#fee2e2;color:#dc2626;border-radius:99px;padding:1px 9px;font-size:12px;margin-left:6px;}
+      .dep-card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px 18px;margin-bottom:12px;}
+      .dep-top{display:flex;align-items:center;gap:14px;flex-wrap:wrap;}
+      .dep-amt{font-size:22px;font-weight:800;color:#4f46e5;}
+      .dep-name{font-size:17px;font-weight:800;color:#111827;}
+      .dep-sample{background:#fbbf24;color:#7c2d12;font-size:10px;font-weight:800;border-radius:4px;padding:2px 6px;}
+      .dep-meta{font-size:12px;color:#9ca3af;margin-left:auto;text-align:right;}
+      .dep-raw{margin-top:8px;font-size:11.5px;color:#6b7280;background:#f9fafb;border:1px dashed #e5e7eb;border-radius:7px;padding:7px 10px;white-space:pre-line;font-family:monospace;}
+      .dep-mbox{margin-top:12px;border-top:1px dashed #e5e7eb;padding-top:12px;}
+      .dep-mline{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:10px 12px;border-radius:9px;margin-bottom:8px;font-size:12.5px;}
+      .dep-ok{background:#ecfdf5;border:1px solid #a7f3d0;}.dep-warn{background:#fffbeb;border:1px solid #fde68a;}
+      .dep-none{background:#f9fafb;border:1px solid #e5e7eb;color:#6b7280;}
+      .dep-tb{font-size:11px;font-weight:700;border-radius:99px;padding:3px 10px;background:#FAEEDA;color:#633806;}
+      .dep-mid{font-weight:700;color:#6b7280;}.dep-mprod{font-weight:700;color:#374151;}.dep-mamt{font-weight:700;color:#374151;}
+      .dep-mbadge{font-size:11px;font-weight:800;border-radius:99px;padding:2px 10px;}
+      .dep-bok{background:#10b981;color:#fff;}.dep-bwarn{background:#f59e0b;color:#fff;}
+      .dep-openable{display:inline-flex;align-items:center;gap:10px;flex-wrap:wrap;flex:1;cursor:pointer;border-radius:8px;padding:2px 4px;transition:background .12s;}
+      .dep-openable:hover{background:rgba(0,0,0,.05);}
+      .dep-openhint{font-size:11px;font-weight:700;color:#4f46e5;background:#eef2ff;border:1px solid #c7d2fe;border-radius:6px;padding:2px 7px;}
+      .dep-right{margin-left:auto;display:flex;gap:8px;flex-shrink:0;}
+      .dep-btn{border:none;border-radius:8px;padding:9px 15px;font-size:12.5px;font-weight:700;cursor:pointer;}
+      .dep-done{background:#1D9E75;color:#fff;}.dep-warnbtn{background:#fff;color:#b45309;border:1px solid #f59e0b;}
+      .dep-ignore{background:#f3f4f6;color:#6b7280;}
+      .dep-empty{background:#fff;border:1px dashed #d1d5db;border-radius:12px;padding:40px 20px;text-align:center;color:#6b7280;font-size:13px;line-height:1.8;}
+      .dep-toggle{background:#eef2ff;color:#4338ca;border:1px solid #c7d2fe;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:700;cursor:pointer;margin-left:auto;}
+    </style>`;
+  }
+
+  function _depPaint() {
+    const box = document.getElementById('depositContent');
+    if (!box) return;
+    _depUpdateBadge();
+    const active = (window._depositDocs || []).filter(d => d.status !== 'done' && d.status !== 'ignored');
+    const showSample = !!window._depShowSample;
+    const cards = [];
+    if (showSample) cards.push(_depSample());
+    active.forEach(d => cards.push(d));
+
+    const banner = `<div class="dep-info"><b>이렇게 동작합니다.</b> 법인폰에 기업은행 입금문자가 오면 자동으로 여기 목록에 뜹니다. 성함·금액이 맞는 <b>입금대기</b> 건을 자동으로 찾아주고, 확인 후 <b>[입금완료]</b>를 누르면 입금완료로 이동합니다.
+      <div class="dep-flow"><span class="c">📱 입금문자</span><span class="a">→</span><span class="c">🤖 자동 매칭</span><span class="a">→</span><span class="c">👀 사람 확인</span><span class="a">→</span><span class="c">✅ 입금완료</span></div></div>`;
+    const toolbar = `<div class="dep-toolbar"><span class="dep-seclabel">🔔 새 입금문자 <span class="dep-cnt">${active.length}건</span></span>
+      <button class="dep-toggle" id="depSampleToggle">${showSample ? '예시 숨기기' : '🧪 예시 카드 보기'}</button></div>`;
+
+    let listHtml;
+    if (!cards.length) {
+      listHtml = `<div class="dep-empty">아직 도착한 입금문자가 없습니다.<br>법인폰 자동전달이 연결되면 여기에 자동으로 표시됩니다.</div>`;
+    } else {
+      listHtml = cards.map(_depCardHtml).join('');
+    }
+    box.innerHTML = _depStyle() + banner + toolbar + listHtml;
+    _depWire();
+  }
+
+  function _depWire() {
+    const box = document.getElementById('depositContent');
+    if (!box) return;
+    const t = box.querySelector('#depSampleToggle');
+    if (t) t.onclick = () => { window._depShowSample = !window._depShowSample; _depPaint(); };
+    box.querySelectorAll('[data-act]').forEach(btn => { btn.onclick = () => _depAction(btn.dataset); });
+    // 매칭 케이스 줄 클릭 → 대시보드 상세 카드 열기
+    box.querySelectorAll('[data-open]').forEach(el => {
+      el.onclick = () => {
+        const id = el.dataset.open;
+        if (id && typeof window.dashOpenModal === 'function') window.dashOpenModal(id);
+        else showToast('상세 카드를 열 수 없습니다', 'error');
+      };
+    });
+  }
+
+  async function _depAction(ds) {
+    if (String(ds.dep || '').startsWith('SAMPLE')) { showToast('예시 카드입니다 (실제 동작 안 함)', 'error'); return; }
+    const user = (typeof NAS_USER !== 'undefined' ? NAS_USER : '') || '';
+    if (ds.act === 'ignore') {
+      if (!confirm('이 입금문자를 목록에서 숨길까요? (무시 / 보류)')) return;
+      try {
+        await updateDoc(doc(db, 'incomingDeposits', ds.dep), { status: 'ignored', handledBy: user, handledAt: serverTimestamp() });
+        showToast('무시 처리했습니다', 'success');
+      } catch (e) { showToast('처리 실패: ' + (e.message || e), 'error'); }
+      return;
+    }
+    if (ds.act === 'done') {
+      const c = (window.dashAllCases || []).find(x => x.id === ds.case);
+      if (!c) { showToast('케이스를 찾을 수 없습니다 (이미 처리됐을 수 있음)', 'error'); return; }
+      if (c.stage !== '입금대기') { showToast('이미 입금대기 상태가 아닙니다', 'error'); return; }
+      const nm = (c.customer || {}).name || '';
+      if (ds.exact === '1') { if (!confirm(nm + ' · 입금완료 처리할까요?')) return; }
+      else { if (!confirm('청구금액과 입금액이 다릅니다.\n그래도 입금완료로 처리할까요?')) return; }
+      try {
+        await dashActionDepositDone(c);
+        await updateDoc(doc(db, 'incomingDeposits', ds.dep), { status: 'done', matchedCaseId: c.id, handledBy: user, handledAt: serverTimestamp() });
+        showToast('✅ 입금완료 처리했습니다', 'success');
+      } catch (e) { showToast('처리 실패: ' + (e.message || e), 'error'); }
+    }
   }
 
   // 액션: 해피콜완료 → 해피콜완료 단계 (actionStatus 모두 비움, 양쪽 단순 status 모두 비움)
