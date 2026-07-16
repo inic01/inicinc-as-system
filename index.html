@@ -5020,7 +5020,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v71';
+  const APP_VERSION = 'v72';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -15170,7 +15170,9 @@
     const isLeaderUp = ['partlead', 'teamlead', 'grouplead'].includes(role);
     // (v71) "해피콜팀 조장"을 등록 방식과 무관하게 인정:
     //   역할이 happycall_grouplead 이거나, 소속이 해피콜팀 + 역할이 grouplead(조장)인 경우.
-    const isHappycallGrouplead = (role === 'happycall_grouplead') || (team === '해피콜팀' && role === 'grouplead');
+    // (v72) 화면 "조장"의 표준 저장 코드는 teamlead (ROLE_LABELS.teamlead='조장', 등록 드롭다운 value=teamlead).
+    //   v71이 grouplead만 검사해 teamlead로 등록된 해피콜팀 조장(조유림 등)이 수리대기에서 계속 잠겼음 → teamlead 추가.
+    const isHappycallGrouplead = (role === 'happycall_grouplead') || (team === '해피콜팀' && (role === 'grouplead' || role === 'teamlead'));
     const isExchangeReturn = (c.type === '교환' || c.type === '반품');
 
     if (stage === '수리대기') {
