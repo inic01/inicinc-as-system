@@ -5033,7 +5033,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v75';
+  const APP_VERSION = 'v77';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -24914,19 +24914,29 @@
   window._depositDocs = window._depositDocs || [];
   window._depShowSample = window._depShowSample || false;
 
-  // 케이스의 청구 총액(입금해야 할 금액) — dashBuildErpTreatmentText의 grandTotal 공식과 동일
+  // 케이스의 "청구 총액"(= 케이스 상세 모달의 '총 발생금액'과 동일한 규칙)
+  // (v77) 무상은 부품값을 청구하지 않음(0), 택배비만. 유상은 부품+택배비(+방문/추가비).
+  //   → 이전엔 무상도 부품을 더해 과다 계산(예: 무상 9,000원 건을 99,000원으로 인식)돼 입금 매칭이 안 됐음.
   window._caseExpectedAmount = function(c) {
-    let total = 0;
-    const parts = Array.isArray(c.partsUsed) ? c.partsUsed : [];
-    parts.forEach(p => {
-      if (p && typeof p === 'object') {
-        if (p.amount != null && !isNaN(p.amount)) total += Number(p.amount);
-        else total += (Number(p.price || p.unitPrice || 0)) * (Number(p.qty || p.quantity || 1));
-      }
-    });
-    if (c.visitFee) total += Number(c.visitFee) || 0;
-    if (c.extraFee) total += Number(c.extraFee) || 0;
-    total += Number(c.deliveryFee || 0);
+    const repairType = c.repairType || '';
+    const isFreeRepair = !repairType.includes('유상'); // 무상/확인요청 등 = 부품 미청구
+    const deliveryFeeVal = parseInt(c.deliveryFee) || 0;
+    // 부품 합계 — 저장된 partsTotal 우선, 없으면 partsUsed에서 계산
+    let partsSubtotal = Number(c.partsTotal);
+    if (isNaN(partsSubtotal)) {
+      partsSubtotal = 0;
+      (Array.isArray(c.partsUsed) ? c.partsUsed : []).forEach(p => {
+        if (p && typeof p === 'object') {
+          if (p.amount != null && !isNaN(p.amount)) partsSubtotal += Number(p.amount);
+          else partsSubtotal += (Number(p.price || p.unitPrice || 0)) * (Number(p.qty || p.quantity || 1));
+        }
+      });
+    }
+    let total = (isFreeRepair ? 0 : partsSubtotal) + deliveryFeeVal;
+    if (!isFreeRepair) { // 방문비·추가비는 유상일 때만 청구
+      if (c.visitFee) total += Number(c.visitFee) || 0;
+      if (c.extraFee) total += Number(c.extraFee) || 0;
+    }
     return total;
   };
 
@@ -25110,15 +25120,27 @@
     });
   }
 
+  // (v76) 낙관적 갱신 헬퍼 — 로컬 문서 상태만 바꿔 즉시 다시 그림 (onSnapshot 기다리지 않음)
+  function _depSetLocalStatus(depId, status) {
+    const d = (window._depositDocs || []).find(x => x._id === depId);
+    const prev = d ? d.status : null;
+    if (d) d.status = status;
+    _depPaint();
+    return prev; // 롤백용 이전 상태
+  }
+
   async function _depAction(ds) {
     if (String(ds.dep || '').startsWith('SAMPLE')) { showToast('예시 카드입니다 (실제 동작 안 함)', 'error'); return; }
     const user = (typeof NAS_USER !== 'undefined' ? NAS_USER : '') || '';
     if (ds.act === 'ignore') {
       if (!confirm('이 입금문자를 목록에서 숨길까요? (무시 / 보류)')) return;
+      const prev = _depSetLocalStatus(ds.dep, 'ignored'); // 즉시 화면에서 제거
       try {
         await updateDoc(doc(db, 'incomingDeposits', ds.dep), { status: 'ignored', handledBy: user, handledAt: serverTimestamp() });
-        showToast('무시 처리했습니다', 'success');
-      } catch (e) { showToast('처리 실패: ' + (e.message || e), 'error'); }
+      } catch (e) {
+        _depSetLocalStatus(ds.dep, prev); // 실패 시 다시 살림
+        showToast('처리 실패: ' + (e.message || e), 'error');
+      }
       return;
     }
     if (ds.act === 'done') {
@@ -25128,11 +25150,15 @@
       const nm = (c.customer || {}).name || '';
       if (ds.exact === '1') { if (!confirm(nm + ' · 입금완료 처리할까요?')) return; }
       else { if (!confirm('청구금액과 입금액이 다릅니다.\n그래도 입금완료로 처리할까요?')) return; }
+      const prev = _depSetLocalStatus(ds.dep, 'done'); // 즉시 화면에서 제거 (낙관적)
       try {
         await dashActionDepositDone(c);
         await updateDoc(doc(db, 'incomingDeposits', ds.dep), { status: 'done', matchedCaseId: c.id, handledBy: user, handledAt: serverTimestamp() });
         showToast('✅ 입금완료 처리했습니다', 'success');
-      } catch (e) { showToast('처리 실패: ' + (e.message || e), 'error'); }
+      } catch (e) {
+        _depSetLocalStatus(ds.dep, prev); // 실패 시 다시 살림
+        showToast('처리 실패: ' + (e.message || e), 'error');
+      }
     }
   }
 
