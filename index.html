@@ -5033,7 +5033,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v79';
+  const APP_VERSION = 'v80';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -15500,6 +15500,11 @@
     if (typeof window.dashRenderList === 'function') {
       window.dashRenderList();
     }
+    // (v80) ERP 작업 화면이 열려 있으면 그 목록도 카테고리 필터 반영해 새로 그림
+    const _ewView = document.getElementById('dashViewErpWork');
+    if (_ewView && _ewView.style.display !== 'none' && typeof window.renderErpWork === 'function') {
+      window.renderErpWork();
+    }
   };
 
   // 로그인 시 본인 탭 선택 초기화
@@ -20653,19 +20658,28 @@
     const c = document.getElementById('erpWorkContent');
     if (!c) return;
 
+    // (v80) 왼쪽 사이드바 카테고리 선택(_currentTabSelection)을 ERP 작업 목록에도 적용.
+    //   선택 없으면 전체. 여러 개 선택 시 OR. 대시보드와 동일하게 cardMatchesTab 재사용.
+    const _erpSelCats = Array.isArray(window._currentTabSelection) ? window._currentTabSelection : [];
+    const _erpCatFilter = (arr) => {
+      if (!_erpSelCats.length) return arr;
+      if (typeof window.cardMatchesTab !== 'function') return arr;
+      return arr.filter(x => _erpSelCats.some(tab => window.cardMatchesTab(x, tab)));
+    };
+
     // (v18) 상위 탭 — 'work' (전산 작업) / 'newproduct' (새상품 완료 ERP 전산 작업)
     if (!window._erpTopTab) window._erpTopTab = 'work';
     if (window._erpTopTab === 'newproduct') {
       // 새상품 완료 ERP 전산 작업 탭
       const userRole = window._currentUserRole || 'engineer';
       const isLeader = ['master', 'partlead', 'teamlead', 'grouplead'].includes(userRole);
-      const npTargets = (window.dashAllCases || []).filter(x => {
+      const npTargets = _erpCatFilter((window.dashAllCases || []).filter(x => {
         if (x.type !== '교환' && x.type !== '반품') return false;
         if (x.newProductCompleted !== true) return false;
         if (x.newProductErpDone === true) return false;
         if (!isLeader && x.newProductCompletedBy !== NAS_USER) return false;
         return true;
-      }).sort((a, b) => {
+      })).sort((a, b) => {
         const at = a.newProductCompletedAt && a.newProductCompletedAt.toDate ? a.newProductCompletedAt.toDate().getTime() : 0;
         const bt = b.newProductCompletedAt && b.newProductCompletedAt.toDate ? b.newProductCompletedAt.toDate().getTime() : 0;
         return bt - at;
@@ -20723,8 +20737,8 @@
       x.erpReadyForInput === true &&
       x.erpProcessed !== true
     );
-    const asTargets = allTargets.filter(x => x.type === 'AS');
-    const exReturnTargets = allTargets.filter(x => x.type === '교환' || x.type === '반품');
+    const asTargets = _erpCatFilter(allTargets.filter(x => x.type === 'AS'));
+    const exReturnTargets = _erpCatFilter(allTargets.filter(x => x.type === '교환' || x.type === '반품'));
 
     const currentTab = window._erpWorkCurrentTab;
     const targets = (currentTab === 'as' ? asTargets : exReturnTargets).slice()
@@ -29733,6 +29747,9 @@
         type: 'AS',
         stage: '임시저장',
         _isDraft: true,
+        // (v80) 조장/팀장/해피콜/마스터 구독 where('erpPartsUploaded','==',false)에 잡히도록 필수.
+        //        이 필드 없으면 임시저장건이 화면에서 사라짐 (신규접수 v49·유형전환 v70과 동일 함정)
+        erpPartsUploaded: false,
         // (v18) 권한별 cases 구독을 위해 — engineer 필드 보장 (본인이 본 화면에 보이려면 필수)
         engineer: NAS_USER || '(미지정)',
         updatedAt: now,
