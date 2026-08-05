@@ -5033,7 +5033,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v82';
+  const APP_VERSION = 'v83';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -27932,14 +27932,21 @@
       return;
     }
 
-    // 불량부품 1~5번 수집 (펼쳐져 있고 값이 있는 것만)
+    // 불량부품 1~5번 수집 — picker 선택값(_defectPickState)이 정본, input은 검색 키워드라 폴백만
+    //   (v83) picker는 선택 시 input.value를 비우고 값을 _defectPickState에 저장하므로,
+    //         input만 읽으면 선택된 불량부품이 누락되고 타이핑 중인 검색어가 새어들어감. submitForm과 동일하게 읽음.
     const defectParts = [];
     for (let n = 1; n <= MAX_DEFECT_SETS; n++) {
       const setEl = (n === 1) ? null : document.getElementById(`defect${n}Set`);
       const isVisible = (n === 1) || (setEl && setEl.style.display !== 'none');
       if (!isVisible) continue;
-      const part = document.getElementById(`defect${n}Part`).value.trim();
-      if (part) defectParts.push(part);
+      const state = window._defectPickState?.[n];
+      if (state && Array.isArray(state.parts) && state.parts.length > 0) {
+        state.parts.forEach(p => { if (p) defectParts.push(p); });
+      } else {
+        const inputVal = document.getElementById(`defect${n}Part`).value.trim();
+        if (inputVal && !/외 \d+개$/.test(inputVal)) defectParts.push(inputVal);
+      }
     }
 
     // 사용부품 (이름만)
