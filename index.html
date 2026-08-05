@@ -5033,7 +5033,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v80';
+  const APP_VERSION = 'v82';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -19960,6 +19960,16 @@
       }
     }
 
+    // (v82) 완료 되돌리기 — 해피콜 조장(+마스터)이 실수로 완료 처리한 AS 건을 이전 단계로 복귀
+    if (stage === '해피콜완료' && window.canRevertComplete && window.canRevertComplete()) {
+      buttons.push({
+        id: 'actRevertComplete',
+        label: '↩️ 완료 취소 → 이전 단계로',
+        bg: '#b45309',
+        action: () => window.dashActionRevertComplete(c)
+      });
+    }
+
     if (buttons.length === 0) {
       btnsEl.innerHTML = '';
       if (noteWrapEl) noteWrapEl.style.display = 'none';
@@ -20445,6 +20455,15 @@
         action: () => dashActionERFinalize(c, isExchange ? '교환완료' : '반품완료')
       });
     }
+    // (v82) 완료 되돌리기 — 해피콜 조장(+마스터)이 완료 처리한 교환/반품을 이전 단계로 복귀
+    else if (stage === '해피콜완료') {
+      if (window.canRevertComplete && window.canRevertComplete()) {
+        buttons.push({
+          id: 'actRevertComplete', label: '↩️ 완료 취소 → 이전 단계로', bg: '#b45309',
+          action: () => window.dashActionRevertComplete(c)
+        });
+      }
+    }
 
     // 그려주기
     if (buttons.length === 0) {
@@ -20504,6 +20523,41 @@
       actionStatusValue: label || '처리대기'
     });
   }
+
+  // (v82) 완료 되돌리기 권한 — 해피콜 조장(happycall_grouplead / 해피콜팀 grouplead·teamlead) + 마스터
+  window.canRevertComplete = function() {
+    const role = window._currentUserRole || '';
+    const team = window._currentUserTeam || '';
+    const isMaster = role === 'master' || (window.isMasterBypassSession && window.isMasterBypassSession());
+    const isHappycallGrouplead = role === 'happycall_grouplead' ||
+      (team === '해피콜팀' && (role === 'grouplead' || role === 'teamlead'));
+    return isMaster || isHappycallGrouplead;
+  };
+
+  // (v82) 해피콜팀이 실수로 '해피콜완료'로 넘긴 건을 이전 단계로 되돌림 (해피콜 조장 전용)
+  window.dashActionRevertComplete = async function(c) {
+    if (!window.canRevertComplete || !window.canRevertComplete()) {
+      showToast('완료 되돌리기 권한이 없습니다 (해피콜 조장 전용)', 'error');
+      return;
+    }
+    // 이전 단계 = statusHistory에서 마지막으로 '해피콜완료'로 들어온 기록의 fromStage
+    const hist = Array.isArray(c.statusHistory) ? c.statusHistory : [];
+    let prevStage = '';
+    for (let i = hist.length - 1; i >= 0; i--) {
+      const h = hist[i];
+      if (h && h.toStage === '해피콜완료' && h.fromStage) { prevStage = h.fromStage; break; }
+    }
+    if (!prevStage) prevStage = c.returnStage || '해피콜대기';
+    if (!confirm(`이 건을 완료 취소하고 이전 단계('${prevStage}')로 되돌릴까요?`)) return;
+    await dashApplyStageChange(c, prevStage, {
+      note: (typeof dashGetActionNote === 'function' ? (dashGetActionNote() || '') : ''),
+      newStatus: '',
+      role: 'happycall',
+      actionLabel: '완료취소(되돌리기)',
+      actionStatusOp: 'append',
+      actionStatusValue: '완료취소'
+    });
+  };
 
   // 교환 ↔ 반품 유형 전환 → 확인요청으로 이동
   async function dashActionERSwapType(c, newType) {
@@ -24895,6 +24949,14 @@
 
   // 액션: 입금완료 → 무상 박스구매면 완료, 유상이면 수리대기
   async function dashActionDepositDone(c) {
+    // (v81) 교환/반품은 '수리' 개념이 없음 — 입금완료 시 처리대기로 보낸다.
+    //   입금내역 화면의 [입금완료 처리]/[🔗직접연결]도 이 함수를 타므로, 여기서 분기해야
+    //   목록에서 처리해도 반품/교환이 수리대기가 아닌 '처리대기'로 정상 이동함.
+    //   (케이스 모달의 반품/교환 흐름과 동일한 dashActionERToProcess 재사용 → 뒷 흐름 일치)
+    //   원인: 조장이 입금내역 화면에서 반품 입금완료 시 AS 로직을 타 수리대기로 빠지던 버그.
+    if (c.type === '교환' || c.type === '반품') {
+      return dashActionERToProcess(c, '입금완료');
+    }
     const note = dashGetActionNote();
     const repairType = c.repairType || '';
     const isPaid = repairType.includes('유상');
@@ -27846,7 +27908,25 @@
   // 사용자가 직접 수정하기 시작하면 자동 생성 멈춤
   let treatmentAutoFilled = false;
 
+  // (v82) 을/를 조사 자동 판별 — 마지막 글자 받침 유무
+  function _josaEulReul(word) {
+    if (!word) return '을';
+    const ch = word.charCodeAt(word.length - 1);
+    if (ch < 0xAC00 || ch > 0xD7A3) return '을'; // 한글 아니면 기본 '을'
+    return ((ch - 0xAC00) % 28) !== 0 ? '을' : '를';
+  }
+
   function updateTreatmentContent() {
+    // (v82) 관리미흡(고객 과실) 선택 시 자동으로 유상 전환 + 안내 — 처리내용 상태와 무관하게 항상 먼저 검사
+    const _d1early = document.getElementById('defect1Name')?.value?.trim() || '';
+    if (_d1early.includes('관리미흡')) {
+      const _rt = document.getElementById('repairType')?.value || '';
+      if (!_rt.includes('유상') && typeof window.selectRepairType === 'function') {
+        window.selectRepairType('유상');
+        if (typeof showToast === 'function') showToast('관리미흡은 고객 과실 건으로 유상 처리로 전환됩니다', 'info');
+      }
+    }
+
     // 사용자가 수동으로 수정한 경우 자동 갱신 안 함
     if (!treatmentAutoFilled && document.getElementById('treatmentContent').value.trim()) {
       return;
@@ -27864,48 +27944,53 @@
 
     // 사용부품 (이름만)
     const usedParts = selectedParts.map(p => p.name);
+    const usedStr = usedParts.join(', ');
+    const defectStr = defectParts.join(', ');
+    const defect1Name = document.getElementById('defect1Name')?.value?.trim() || '';
 
     const textarea = document.getElementById('treatmentContent');
     const hint = document.getElementById('treatmentHint');
 
-    if (defectParts.length === 0 && usedParts.length === 0) {
+    // (v82) 처리내용 자동멘트 — 우선순위: 업데이트 > 단순작업 > 무증상 > 관리미흡 > 일반
+    const hasUpdate = usedParts.some(p => String(p).includes('업데이트'));
+    const hasSimple = usedParts.some(p => String(p).includes('단순작업'));
+    const isNoSymptom = defect1Name.includes('무증상');
+    const isCareLack = defect1Name.includes('관리미흡');
+
+    // 아무 정보도 없고 특수 케이스도 아니면 비움
+    if (!hasUpdate && !hasSimple && !isNoSymptom && !isCareLack &&
+        defectParts.length === 0 && usedParts.length === 0) {
       textarea.value = '';
       treatmentAutoFilled = false;
-      hint.style.display = 'none';
+      if (hint) hint.style.display = 'none';
       return;
     }
 
-    // 재출고 접수 사유면 불량명1 기반으로 처리내용 자동 생성
-    const erpReasonVal = document.getElementById('repairType')?.value || '';
-    const isReoutgo = erpReasonVal === '재출고' ||
-      (document.querySelector('.toggle-btn.active[data-value="재출고"]') !== null) ||
-      (document.querySelector('[data-value="재출고"].active') !== null);
-    if (isReoutgo) {
-      const defect1Name = document.getElementById('defect1Name')?.value?.trim() || '';
-      if (defect1Name) {
-        let reoutgoText = '';
-        if (defect1Name.includes('무증상')) {
-          reoutgoText = `무증상 확인되어 재출고 진행`;
-        } else if (defect1Name.includes('관리미흡')) {
-          reoutgoText = `관리미흡으로 인해 재출고 진행`;
-        } else {
-          reoutgoText = `${defect1Name} 확인되어 재출고 진행`;
-        }
-        textarea.value = reoutgoText;
-        treatmentAutoFilled = true;
-        hint.style.display = 'block';
-        return;
+    let text = '';
+    if (hasUpdate) {
+      text = '제품 프로그램 업데이트 후 정상작동 테스트 완료 출고 예정입니다.';
+    } else if (hasSimple) {
+      text = '단순 작업(나사 조임, 전선 체결) 후 정상작동 테스트 완료 출고 예정입니다.';
+    } else if (isNoSymptom) {
+      text = '제품 테스트 진행 시 무증상(증상이 나타나지 않음)으로 확인되었습니다.';
+    } else if (isCareLack) {
+      text = usedStr
+        ? `엔지니어 점검 결과 관리미흡 확인되어 ${usedStr}${_josaEulReul(usedStr)} 교체 또는 구매하였으며, 정상작동 테스트 완료 출고 예정입니다.`
+        : '엔지니어 점검 결과 관리미흡 확인되어 정상작동 테스트 완료 출고 예정입니다.';
+    } else {
+      // 일반
+      if (defectStr && usedStr) {
+        text = `엔지니어 점검 결과 ${defectStr} 이상이 확인되어 ${usedStr}${_josaEulReul(usedStr)} 교체하였으며, 정상작동 테스트 완료 출고 예정입니다.`;
+      } else if (defectStr) {
+        text = `엔지니어 점검 결과 ${defectStr} 이상이 확인되어 정상작동 테스트 완료 출고 예정입니다.`;
+      } else {
+        text = `엔지니어 점검 결과 ${usedStr}${_josaEulReul(usedStr)} 교체하였으며, 정상작동 테스트 완료 출고 예정입니다.`;
       }
     }
 
-    // v8 양식: "[불량부품] 이상 확인, [사용부품] 교체 후 정상작동 확인"
-    const sentences = [];
-    if (defectParts.length > 0) sentences.push(defectParts.join(', ') + ' 이상 확인');
-    if (usedParts.length > 0) sentences.push(usedParts.join(', ') + ' 교체 후 정상작동 확인');
-
-    textarea.value = sentences.join(', ');
+    textarea.value = text;
     treatmentAutoFilled = true;
-    hint.style.display = 'block';
+    if (hint) hint.style.display = 'block';
   }
 
   // 불량부품 입력 변경 시 처리내용 자동 갱신 (1~5번 모두)
@@ -30009,8 +30094,10 @@
 
     // (v26) 사용부품: 필수 — 부품 누락 접수 방지
     //       면제: 확인요청 / 헤어드라이어 iHD01 화이트·그레이 (수리 아님 — 교환 흐름)
+    //       (v82) 무증상은 교체 부품이 없으므로 면제 (단순작업·업데이트는 사용부품에 포함돼 자동 통과)
     if (!isReinspect && selectedParts.length === 0 &&
-        !(window.isHairDryerIHD01 && window.isHairDryerIHD01(productName))) {
+        !(window.isHairDryerIHD01 && window.isHairDryerIHD01(productName)) &&
+        !String(defect1Name).includes('무증상')) {
       return showToast('사용부품을 1개 이상 선택하세요 (필수)', 'error');
     }
 
