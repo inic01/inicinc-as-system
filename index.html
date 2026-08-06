@@ -4673,7 +4673,8 @@
     arrayUnion,
     deleteField,
     Timestamp,
-    getCountFromServer
+    getCountFromServer,
+    writeBatch
   } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
   // (v25) 이메일 링크 2단계 인증용 — Firebase Authentication SDK (Cloud Functions/SendGrid 불필요)
   import {
@@ -12340,6 +12341,20 @@
       window._adminDefectPartMappings = items;
       adminRenderDefectPartTable();
       adminRenderDefectPartStats();
+      // (v83 hotfix) 매칭 데이터가 폼 사용 중에 늦게 도착하면 추천 부품(★)이 안 뜨고 재진입해야 보이던 문제 —
+      //   부품 데이터 sync와 동일하게, 열려있는 AS 폼 패널을 다시 렌더해 추천을 즉시 반영.
+      try {
+        const _sp = document.getElementById('partsPanel');
+        if (_sp && _sp.classList.contains('open') && typeof window._asRenderSearchPanel === 'function') {
+          window._asRenderSearchPanel();
+        }
+        for (let _n = 1; _n <= 5; _n++) {
+          const _pp = document.getElementById(`defect${_n}PartPanel`);
+          if (_pp && _pp.classList.contains('open') && typeof renderPickerPanel === 'function') {
+            renderPickerPanel('part', _n);
+          }
+        }
+      } catch (e) {}
     }, (err) => {
       console.error('부품 매칭 동기화 실패:', err);
       showToast('부품 매칭 로딩 실패: ' + err.message, 'error');
@@ -25043,7 +25058,9 @@
   function _depUpdateBadge() {
     const badge = document.getElementById('depositMenuBadge');
     if (!badge) return;
-    const n = (window._depositDocs || []).filter(d => d.status !== 'done' && d.status !== 'ignored').length;
+    // (v83) 배지는 '매칭된' 입금만 카운트 — 구성품 구매 등 미매칭 노이즈는 배지에서 제외
+    const active = (window._depositDocs || []).filter(d => d.status !== 'done' && d.status !== 'ignored');
+    const n = active.filter(d => { const m = _depMatch(d); return m.byName.length > 0 || m.byDone.length > 0; }).length;
     if (n > 0) { badge.style.display = ''; badge.textContent = n; } else badge.style.display = 'none';
   }
 
@@ -25091,7 +25108,7 @@
       }).join('');
     } else if (!m.byName.length) {
       matchHtml = `<div class="dep-mline dep-none">🔍 성함·금액이 맞는 입금대기 건이 없습니다. (동명이인·미등록·다른 용도 입금일 수 있음)
-        <span class="dep-right"><button class="dep-btn dep-ignore" data-act="ignore" data-dep="${escapeHtml(dep._id)}">무시 / 보류</button></span></div>`;
+        <span class="dep-right"><button class="dep-btn dep-ignore" data-act="ignore" data-dep="${escapeHtml(dep._id)}">확인</button></span></div>`;
     } else {
       matchHtml = m.byName.map(c => {
         const exp = window._caseExpectedAmount(c);
@@ -25180,6 +25197,16 @@
       .dep-ignore{background:#f3f4f6;color:#6b7280;}
       .dep-empty{background:#fff;border:1px dashed #d1d5db;border-radius:12px;padding:40px 20px;text-align:center;color:#6b7280;font-size:13px;line-height:1.8;}
       .dep-toggle{background:#eef2ff;color:#4338ca;border:1px solid #c7d2fe;border-radius:8px;padding:8px 14px;font-size:12px;font-weight:700;cursor:pointer;margin-left:auto;}
+      .dep-fold{margin-top:8px;background:#fff;border:1px dashed #d1d5db;border-radius:12px;overflow:hidden;}
+      .dep-fold-head{display:flex;align-items:center;gap:10px;padding:14px 16px;cursor:pointer;font-size:13.5px;font-weight:700;color:#6b7280;user-select:none;}
+      .dep-fold-head:hover{background:#f9fafb;}
+      .dep-fold-cnt{background:#e5e7eb;color:#374151;border-radius:99px;padding:1px 9px;font-size:12px;}
+      .dep-fold-body{padding:0 12px 12px;display:none;}
+      .dep-fold.open .dep-fold-body{display:block;}
+      .dep-fold.open .dep-chev{transform:rotate(90deg);}
+      .dep-chev{transition:transform .15s;display:inline-block;}
+      .dep-noise{font-size:11px;background:#f3f4f6;color:#9ca3af;border-radius:6px;padding:2px 8px;font-weight:700;}
+      .dep-foothint{font-size:11px;color:#9ca3af;margin-top:10px;text-align:center;}
     </style>`;
   }
 
@@ -25195,14 +25222,42 @@
 
     const banner = `<div class="dep-info"><b>이렇게 동작합니다.</b> 법인폰에 기업은행 입금문자가 오면 자동으로 여기 목록에 뜹니다. 성함·금액이 맞는 <b>입금대기</b> 건을 자동으로 찾아주고, 확인 후 <b>[입금완료]</b>를 누르면 입금완료로 이동합니다.
       <div class="dep-flow"><span class="c">📱 입금문자</span><span class="a">→</span><span class="c">🤖 자동 매칭</span><span class="a">→</span><span class="c">👀 사람 확인</span><span class="a">→</span><span class="c">✅ 입금완료</span></div></div>`;
-    const toolbar = `<div class="dep-toolbar"><span class="dep-seclabel">🔔 새 입금문자 <span class="dep-cnt">${active.length}건</span></span>
+    // (v83) 매칭/미매칭 분리 — 입금대기 케이스와 이름이 매칭되는 건만 상단, 나머지(구성품 구매 등)는 접기
+    //   샘플(예시) 카드는 항상 상단에 표시
+    const matched = [];
+    const unmatched = [];
+    active.forEach(d => {
+      const m = _depMatch(d);
+      if (m.byName.length > 0 || m.byDone.length > 0) matched.push(d);
+      else unmatched.push(d);
+    });
+
+    const toolbar = `<div class="dep-toolbar"><span class="dep-seclabel">🔔 매칭된 입금 <span class="dep-cnt">${matched.length}건</span></span>
       <button class="dep-toggle" id="depSampleToggle">${showSample ? '예시 숨기기' : '🧪 예시 카드 보기'}</button></div>`;
 
-    let listHtml;
-    if (!cards.length) {
-      listHtml = `<div class="dep-empty">아직 도착한 입금문자가 없습니다.<br>법인폰 자동전달이 연결되면 여기에 자동으로 표시됩니다.</div>`;
+    let listHtml = '';
+    if (showSample) listHtml += _depCardHtml(_depSample());
+
+    if (!matched.length && !unmatched.length && !showSample) {
+      listHtml += `<div class="dep-empty">아직 도착한 입금문자가 없습니다.<br>법인폰 자동전달이 연결되면 여기에 자동으로 표시됩니다.</div>`;
     } else {
-      listHtml = cards.map(_depCardHtml).join('');
+      listHtml += matched.map(_depCardHtml).join('');
+      if (!matched.length && !showSample) {
+        listHtml += `<div class="dep-empty" style="padding:24px;">성함이 입금대기 건과 매칭되는 입금이 없습니다.<br><span style="font-size:12px;color:#9ca3af;">아래 미매칭 입금을 펼쳐서 확인하세요.</span></div>`;
+      }
+      if (unmatched.length) {
+        const open = !!window._depFoldOpen;
+        listHtml += `<div class="dep-fold ${open ? 'open' : ''}" id="depFold">
+          <div class="dep-fold-head" id="depFoldHead">
+            <span class="dep-chev">▶</span> 🔻 미매칭 입금 <span class="dep-fold-cnt">${unmatched.length}건</span>
+            <span class="dep-noise">구성품 구매 등</span>
+            <span style="font-size:11px;color:#9ca3af;font-weight:600;">클릭해서 ${open ? '접기' : '펼치기'}</span>
+            <button class="dep-btn" id="depIgnoreAllBtn" style="margin-left:auto;background:#e0e7ff;color:#3730a3;border:1px solid #c7d2fe;">✅ 전체 확인 (${unmatched.length}건 정리)</button>
+          </div>
+          <div class="dep-fold-body">${unmatched.map(_depCardHtml).join('')}
+            <div class="dep-foothint">여기 있는 건도 [무시]로 정리하거나 [🔗 직접 연결]로 처리할 수 있습니다 — 사라지지 않습니다.</div>
+          </div></div>`;
+      }
     }
     box.innerHTML = _depStyle() + banner + toolbar + listHtml;
     _depWire();
@@ -25213,6 +25268,12 @@
     if (!box) return;
     const t = box.querySelector('#depSampleToggle');
     if (t) t.onclick = () => { window._depShowSample = !window._depShowSample; _depPaint(); };
+    // (v83) 미매칭 접기 토글
+    const fh = box.querySelector('#depFoldHead');
+    if (fh) fh.onclick = () => { window._depFoldOpen = !window._depFoldOpen; _depPaint(); };
+    // (v83) 미매칭 전체 확인 (일괄 정리) — 헤더 토글로 전파되지 않게 stopPropagation
+    const ia = box.querySelector('#depIgnoreAllBtn');
+    if (ia) ia.onclick = (e) => { e.stopPropagation(); if (typeof window._depIgnoreAllUnmatched === 'function') window._depIgnoreAllUnmatched(); };
     box.querySelectorAll('[data-act]').forEach(btn => { btn.onclick = () => _depAction(btn.dataset); });
     // 매칭 케이스 줄 클릭 → 대시보드 상세 카드 열기
     box.querySelectorAll('[data-open]').forEach(el => {
@@ -25223,6 +25284,36 @@
       };
     });
   }
+
+  // (v83) 미매칭 입금 일괄 확인 — 구성품 구매 등 매칭 안 되는 건을 한 번에 목록에서 정리(status=ignored)
+  //   데이터는 삭제하지 않고 status만 바꿔 목록에서만 숨김. batch로 커밋(최대 500/batch → 400씩 청크).
+  window._depIgnoreAllUnmatched = async function() {
+    const active = (window._depositDocs || []).filter(d => d.status !== 'done' && d.status !== 'ignored');
+    const unmatched = active.filter(d => { const m = _depMatch(d); return m.byName.length === 0 && m.byDone.length === 0; });
+    if (!unmatched.length) { showToast('정리할 미매칭 입금이 없습니다', 'info'); return; }
+    if (!confirm(`미매칭 입금 ${unmatched.length}건을 전체 확인 처리하여 목록에서 정리할까요?\n(구성품 구매 등 — 데이터는 남고 목록에서만 숨겨집니다.)`)) return;
+    const user = (typeof NAS_USER !== 'undefined' ? NAS_USER : '') || '';
+    // 낙관적: 로컬에서 즉시 제거 + 실패 시 롤백용 이전 상태 보관
+    const prevStatuses = new Map();
+    unmatched.forEach(d => {
+      const x = (window._depositDocs || []).find(y => y._id === d._id);
+      if (x) { prevStatuses.set(x._id, x.status); x.status = 'ignored'; }
+    });
+    _depPaint();
+    try {
+      for (let i = 0; i < unmatched.length; i += 400) {
+        const chunk = unmatched.slice(i, i + 400);
+        const batch = writeBatch(db);
+        chunk.forEach(d => batch.update(doc(db, 'incomingDeposits', d._id), { status: 'ignored', handledBy: user, handledAt: serverTimestamp() }));
+        await batch.commit();
+      }
+      showToast(`✅ 미매칭 ${unmatched.length}건 확인 처리 완료`, 'success');
+    } catch (e) {
+      prevStatuses.forEach((st, id) => { const x = (window._depositDocs || []).find(y => y._id === id); if (x) x.status = st; });
+      _depPaint();
+      showToast('일괄 처리 실패: ' + (e.message || e) + ' — 새로고침 후 다시 시도', 'error');
+    }
+  };
 
   // (v76) 낙관적 갱신 헬퍼 — 로컬 문서 상태만 바꿔 즉시 다시 그림 (onSnapshot 기다리지 않음)
   function _depSetLocalStatus(depId, status) {
@@ -27451,6 +27542,8 @@
       updatePickerDisplay('part', defectNum);
       // 불량부품은 다중이라 패널 유지하면서 재렌더만
       renderPickerPanel(type, defectNum);
+      // (v84) 불량부품 선택/해제 시에도 처리내용 자동 갱신 (이게 빠져서 불량부품 재선택해도 안 바뀌던 버그)
+      if (typeof updateTreatmentContent === 'function') updateTreatmentContent();
     }
   };
 
@@ -27474,6 +27567,8 @@
     if (panel && panel.classList.contains('open')) {
       renderPickerPanel(type, defectNum);
     }
+    // (v84) 불량명/불량부품 해제 시에도 처리내용 자동 갱신
+    if (typeof updateTreatmentContent === 'function') updateTreatmentContent();
   };
 
   // picker input 표시(선택값을 input 텍스트에 반영 + chip 영역에 표시)
