@@ -5011,12 +5011,57 @@
   // v8 코드 이식. 시놀로지 SYNO.API.Auth로 로그인하여 NAS_SID 발급받음.
   // 발급된 SID는 메모리에만 보관 (새로고침 시 재로그인 필요).
 
-  // 마스터 계정 (NAS 인증 우회용 - 2차 인증으로 NAS 직접 로그인이 막힌 관리자용)
-  // ⚠️ 마스터로 로그인하면 NAS_SID가 없으므로 사진/영상 NAS 업로드는 생략됨 (테스트 모드)
+  // ============================================================
+  // (보안) 마스터 우회 계정 제거 — 2026-08-22
+  // ------------------------------------------------------------
+  // 기존에는 이 자리에 마스터 아이디/비밀번호가 그대로 적혀 있었습니다.
+  // HTML은 브라우저에서 "페이지 소스 보기"만 하면 누구나 읽을 수 있으므로
+  // 사실상 전 세계에 관리자 비밀번호를 공개한 상태였습니다.
+  //
+  // 이제 마스터도 다른 직원과 똑같이 users 컬렉션 + 이메일 인증으로
+  // 로그인합니다. (users 문서에 role: 'master' 로 등록)
+  //
+  // ⚠️ 이 자리에 비밀번호를 다시 적으면 안 됩니다. 같은 문제가 재발합니다.
+  // ============================================================
   const MASTER_ACCOUNTS = {
-    'inicinc': 'dkdlslr1!'
+    // (비어 있음 — 우회 계정 없음)
   };
   window.MASTER_ACCOUNTS = MASTER_ACCOUNTS;
+
+  // (보안) 예전 버전이 브라우저에 저장해 둔 마스터 비밀번호 흔적 제거
+  //   localStorage는 브라우저를 꺼도 남기 때문에, 공용 PC에서는
+  //   이 파일을 고쳐도 예전 비밀번호가 계속 남아 있게 됩니다.
+  try { localStorage.removeItem('nas_master_pass'); } catch(e) {}
+
+  // ============================================================
+  // (정책 2026-08-22) 야간 접속 차단 — 22:00 ~ 다음날 08:30
+  // ------------------------------------------------------------
+  //   업무 시간 외에는 로그인 자체를 막습니다.
+  //   시간을 바꾸려면 아래 두 줄의 숫자만 고치면 됩니다.
+  //
+  //   ⚠️ 주의: 이것은 "앞문 자물쇠"입니다.
+  //      화면에서만 막는 것이라, 프로그램을 따로 만들어 접근하면
+  //      이 시간 제한은 그대로 통과합니다.
+  //      실제로 막으려면 Firebase 보안 규칙에도 같은 시간 조건을
+  //      넣어야 합니다. (한국시간 22:00~08:30 = 세계표준시 13:00~23:30)
+  // ============================================================
+  //  ▼▼▼ 켜고 끄는 스위치 ▼▼▼
+  //  false = 야간 차단 안 함 (특근/야근 있을 때)
+  //  true  = 야간 차단 함
+  const NIGHT_BLOCK_ENABLED = false;
+  //  ▲▲▲ 여기 한 글자만 바꾸면 됩니다 ▲▲▲
+
+  const NIGHT_BLOCK_START_MIN = 22 * 60;       // 22:00 부터
+  const NIGHT_BLOCK_END_MIN   = 8 * 60 + 30;   // 08:30 까지
+  window.NIGHT_BLOCK_MESSAGE  = '야간 시간(22:00 ~ 08:30)에는 접속할 수 없습니다. 오전 8시 30분 이후에 다시 로그인해 주세요.';
+
+  window.isNightBlockedNow = function() {
+    if (!NIGHT_BLOCK_ENABLED) return false;   // 스위치가 꺼져 있으면 항상 통과
+    const now = new Date();
+    const mins = now.getHours() * 60 + now.getMinutes();
+    // 22:00~23:59 이거나 00:00~08:29 이면 차단
+    return (mins >= NIGHT_BLOCK_START_MIN) || (mins < NIGHT_BLOCK_END_MIN);
+  };
 
   // (v20) 마스터 우회 로그인 판정 — 모든 곳에서 통일된 기준 사용
   // 기존: NAS_SID === '' 만 보고 판정 → 해피콜 로그인(NAS_SID 빈값)이 마스터로 오인되는 버그
@@ -5251,14 +5296,17 @@
   window.clearLoginSession = clearLoginSession;
 
   // 페이지 로드 시: 저장된 아이디 / 서버주소 자동 채우기
-  // ⚠️ 보안 정책: 마스터 계정만 비밀번호 자동 저장 (개발/테스트 편의)
-  //   일반 NAS 계정은 보안상 비밀번호 저장하지 않음
+  // ⚠️ 보안 정책: 비밀번호는 어떤 계정도 브라우저에 저장하지 않음 (2026-08-22)
   // (v22) F5 새로고침 자동 로그인 복원 — 자동 채우기보다 먼저 시도
   //   inic_session 있으면 즉시 메모리 변수 복원 + enterApp 호출
   let _sessionRestored = false;
   try {
     // (v67) 예전 localStorage 세션이 남아 있으면 제거 — 죽은 SID 재사용 방지
     try { localStorage.removeItem('inic_session'); } catch(_) {}
+    // (정책 2026-08-22) 야간 시간대에는 저장된 세션으로도 자동 복원되지 않도록 삭제
+    if (window.isNightBlockedNow && window.isNightBlockedNow()) {
+      try { sessionStorage.removeItem('inic_session'); } catch(_) {}
+    }
     const _rawSession = sessionStorage.getItem('inic_session');
     if (_rawSession) {
       const s = JSON.parse(_rawSession);
@@ -5304,15 +5352,12 @@
       // 엔지니어 환경 — 기존 동작
       const savedUser = localStorage.getItem('nas_user');
       const savedUrl = localStorage.getItem('nas_url');
-      const savedMasterPass = localStorage.getItem('nas_master_pass');
+      // (보안) 마스터 비밀번호 자동 채우기 제거 — 비밀번호는 브라우저에 저장하지 않음
+      try { localStorage.removeItem('nas_master_pass'); } catch(e) {}
       if (savedUser) document.getElementById('nasUser').value = savedUser;
       if (savedUrl) document.getElementById('nasUrl').value = savedUrl;
 
-      const userLower = String(savedUser || '').toLowerCase();
-      if (savedMasterPass && MASTER_ACCOUNTS[userLower]) {
-        document.getElementById('nasPass').value = savedMasterPass;
-        setTimeout(() => document.getElementById('loginBtn').focus(), 100);
-      } else if (savedUser) {
+      if (savedUser) {
         setTimeout(() => document.getElementById('nasPass').focus(), 100);
       } else {
         setTimeout(() => document.getElementById('nasUser').focus(), 100);
@@ -5335,37 +5380,20 @@
       return;
     }
 
+    // (정책) 야간 접속 차단 — 22:00 ~ 08:30
+    if (window.isNightBlockedNow && window.isNightBlockedNow()) {
+      errEl.textContent = window.NIGHT_BLOCK_MESSAGE;
+      errEl.classList.add('show');
+      return;
+    }
+
     btn.disabled = true;
     btn.textContent = '로그인 중...';
 
-    // 1) 마스터 계정 — NAS 인증 거치지 않고 바로 통과 (v8과 동일)
-    //    NAS_SID 없이 진입하므로 NAS 업로드는 자동 생략됨
-    const userLower = user.toLowerCase();
-    if (MASTER_ACCOUNTS[userLower] && MASTER_ACCOUNTS[userLower] === pass) {
-      NAS_SID = '';      // 비어있음 = 마스터 계정 = NAS 업로드 생략 모드
-      NAS_USER = user;
-      NAS_BASE = url;
-
-      // 아이디/서버주소 + 마스터 비밀번호 저장 (마스터만, 개발 편의)
-      if (document.getElementById('rememberLogin').checked) {
-        try {
-          localStorage.setItem('nas_user', user);
-          localStorage.setItem('nas_url', url);
-          localStorage.setItem('nas_master_pass', pass);  // 🔐 마스터 전용
-        } catch(e) {}
-      } else {
-        // 체크 해제 시 저장된 비번 제거
-        try { localStorage.removeItem('nas_master_pass'); } catch(e) {}
-      }
-
-      btn.disabled = false;
-      btn.textContent = '로그인';
-      // 비밀번호 칸은 비우지 않음 (다음 로그인 편의)
-      // (v22) F5 자동 로그인용 세션 저장
-      saveLoginSession({ type: 'master', user: user, sid: '', base: url, role: 'master' });
-      enterApp(true);  // true = 마스터 계정
-      return;
-    }
+    // 1) (보안 2026-08-22) 마스터 우회 로그인 제거
+    //    예전에는 여기서 HTML에 적힌 마스터 비밀번호와 대조해 NAS 인증 없이
+    //    바로 통과시켰습니다. 이제는 모두 아래 NAS 인증을 거칩니다.
+    //    마스터도 NAS 계정으로 로그인하고, 권한은 users 문서의 role로 결정됩니다.
 
     // 2) 일반 NAS 계정 — api_proxy.php를 통해 시놀로지 인증 API 호출
     // 같은 폴더(v9_test/)에 api_proxy.php 복사본이 있어야 함
@@ -5426,9 +5454,9 @@
   //
   // 끄려면 아래 플래그를 false로
   const EMAIL_AUTH_ENABLED = true;        // 해피콜팀 이메일 인증
-  // (v25) 마스터 계정 이메일 인증 — 일단 해피콜팀만 적용하기로 결정되어 false
-  //   나중에 마스터도 적용하려면 true로 변경 + otpConfig/masterEmails 문서에 이메일 등록
-  const EMAIL_AUTH_FOR_MASTER = false;
+  // (보안 2026-08-22) 마스터 우회 계정이 제거되어 마스터도 일반 직원과 동일하게
+  //   users 문서 + 이메일 인증 경로를 탑니다. 예외를 만들지 않기 위해 true 고정.
+  const EMAIL_AUTH_FOR_MASTER = true;
 
   // 마지막 발송 정보 (재전송용)
   let _emailAuthLastSend = null;   // { userId, email }
@@ -5620,6 +5648,12 @@
     try {
       if (!EMAIL_AUTH_ENABLED) return;
       if (!isSignInWithEmailLink(fbAuth, location.href)) return;
+      // (정책 2026-08-22) 야간 시간대에는 인증 메일 링크로도 로그인 완료 안 됨
+      if (window.isNightBlockedNow && window.isNightBlockedNow()) {
+        emailAuthCleanUrl();
+        alert(window.NIGHT_BLOCK_MESSAGE);
+        return;
+      }
       // 이미 세션 자동복원으로 로그인된 상태면 URL만 정리하고 끝
       if (_sessionRestored) { emailAuthCleanUrl(); return; }
 
@@ -5701,56 +5735,22 @@
       return;
     }
 
+    // (정책) 야간 접속 차단 — 22:00 ~ 08:30
+    if (window.isNightBlockedNow && window.isNightBlockedNow()) {
+      errEl.textContent = window.NIGHT_BLOCK_MESSAGE;
+      errEl.classList.add('show');
+      return;
+    }
+
     btn.disabled = true;
     btn.textContent = '로그인 중...';
 
-    // (v24) 마스터 계정 우회 — GitHub 호스팅(해피콜 화면)에서도 마스터 로그인 허용
-    //   GitHub 환경에선 엔지니어 로그인 카드가 숨겨져 마스터 입력란 자체가 없으므로,
-    //   해피콜 로그인 화면에 마스터 아이디/비번을 입력하면 여기서 바로 통과시킴.
-    //   NAS_SID='' → NAS 업로드 생략 모드 (사내 서버 없는 GitHub에선 어차피 업로드 불가)
-    const _hcUserLower = user.toLowerCase();
-    if (window.MASTER_ACCOUNTS && window.MASTER_ACCOUNTS[_hcUserLower]
-        && window.MASTER_ACCOUNTS[_hcUserLower] === pass) {
-      NAS_SID = '';
-      NAS_USER = user;
-      NAS_BASE = '';
-      try {
-        if (document.getElementById('hcRememberLogin').checked) {
-          localStorage.setItem('hc_user', user);
-        }
-      } catch(e) {}
-
-      // (v25) 로그인 완료 동작 — 이메일 인증 OFF일 때만 즉시 실행
-      const _masterComplete = function() {
-        saveLoginSession({ type: 'master', user: user, sid: '', base: '', role: 'master' });
-        enterApp(true);  // true = 마스터 계정
-      };
-
-      if (EMAIL_AUTH_ENABLED && EMAIL_AUTH_FOR_MASTER) {
-        try {
-          const _masterEmail = await emailAuthLookupMasterEmail(user);
-          if (!_masterEmail) {
-            errEl.textContent = '마스터 계정 이메일이 등록되지 않았습니다. (Firestore → otpConfig → masterEmails 문서 확인)';
-            errEl.classList.add('show');
-          } else {
-            await emailAuthStart(user, _masterEmail);  // 인증 메일 발송 + 대기 카드 전환
-          }
-        } catch (otpErr) {
-          console.error('인증 메일 발송 실패(마스터):', otpErr);
-          errEl.textContent = emailAuthSendErrorMessage(otpErr);
-          errEl.classList.add('show');
-        }
-        btn.disabled = false;
-        btn.textContent = '로그인';
-        document.getElementById('hcPass').value = '';
-        return;
-      }
-
-      btn.disabled = false;
-      btn.textContent = '로그인';
-      _masterComplete();
-      return;
-    }
+    // (보안 2026-08-22) 마스터 우회 로그인 제거
+    //   예전에는 이 자리에서 HTML에 적힌 마스터 아이디/비밀번호와 대조해
+    //   이메일 인증도 없이 바로 통과시켰습니다.
+    //   → 페이지 소스만 보면 누구나 관리자로 들어올 수 있었습니다.
+    //   이제 마스터도 아래의 일반 경로(users 문서 + 이메일 인증)를 그대로 탑니다.
+    //   users 문서에 team: '해피콜팀', role: 'master' 로 등록하면 됩니다.
 
     try {
       const ref = doc(db, 'users', user);
@@ -17884,16 +17884,26 @@
 
   // 22:00 자동 로그아웃 (매일 밤 10시)
   // - 모든 로그인 사용자 강제 종료 (마스터 포함)
-  // - 새 로그인은 24시간 언제든 가능
+  // - (2026-08-22 변경) 22:00~08:30 사이에는 새 로그인도 불가
   // (v21) 절전/종료 후 재가동 시에도 22시 이후면 강제 로그아웃 — localStorage 발동 일자 기반
   function checkAutoLogoutTime() {
     // (v18) NAS_SID 체크 제거 — 마스터(inicinc)도 포함해서 22시 강제 로그아웃
     if (!NAS_USER) return; // 로그인 안 된 상태면 무시
     const now = new Date();
-    const hour = now.getHours();
-    // (v21) "오늘 22:00"이 이미 지났는지 확인 (절전에서 깬 경우도 포함)
-    // hour >= 22 = 22:00 이후 ~ 23:59 (자정 직전)
-    if (hour < 22) return;
+    // (정책 2026-08-22) 야간 차단 시간(22:00~08:30)에 들어서면 강제 로그아웃
+    //   기존에는 22:00~23:59만 봤으나, 자정 넘겨 새벽에 깨어난 PC도 잡도록 확장
+    if (!(window.isNightBlockedNow && window.isNightBlockedNow())) {
+      // 21:50 예고 알림 — 작업 중 튕겨서 입력 내용이 날아가는 것 방지
+      try {
+        const _m = now.getHours() * 60 + now.getMinutes();
+        if (_m >= (21 * 60 + 50) && _m < (22 * 60) && !window._nightBlockWarned) {
+          window._nightBlockWarned = true;
+          showToast('잠시 후 22:00에 자동 로그아웃됩니다. 작성 중인 내용을 저장해 주세요.', 'warning');
+        }
+      } catch(e) {}
+      return;
+    }
+    window._nightBlockWarned = false;
     // localStorage에 "마지막 자동 로그아웃 발동 일자" 저장 → 같은 날 중복 발동 방지
     const today = now.getFullYear() + '-'
                 + String(now.getMonth() + 1).padStart(2, '0') + '-'
@@ -17903,7 +17913,7 @@
     if (lastLogoutDate === today) return; // 오늘 이미 발동했으면 패스
     try { localStorage.setItem('inic_lastAutoLogoutDate', today); } catch(e) {}
     console.log('[자동로그아웃] 22:00 이후 도달 - 강제 로그아웃 처리 (' + now.toLocaleString() + ')');
-    try { showToast('22:00 자동 로그아웃되었습니다. 다시 로그인하세요.', 'warning'); } catch(e) {}
+    try { showToast('22:00 자동 로그아웃되었습니다. 오전 8시 30분 이후에 다시 로그인해 주세요.', 'warning'); } catch(e) {}
     // (v22) F5 자동 로그인 세션도 함께 삭제 — 없으면 reload 후 다시 자동 로그인됨
     // (v67) 세션이 sessionStorage로 옮겨졌으므로 둘 다 정리
     try { sessionStorage.removeItem('inic_session'); } catch(e) {}
