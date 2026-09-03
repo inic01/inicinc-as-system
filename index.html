@@ -3531,10 +3531,109 @@
 
       <div class="login-error" id="emailAuthError"></div>
 
-      <div class="login-info">
+      <div class="login-info" id="emailAuthFootNote">
         💡 메일이 안 보이면 <b>스팸함</b>을 확인해주세요.<br>
         💡 링크는 가급적 <b>로그인을 시작한 이 기기</b>에서 열어주세요.<br>
         💡 다른 기기에서 열었다면 이메일 주소 확인 창이 뜹니다.
+      </div>
+    </div>
+
+    <!-- (2026-09-01) 엔지니어 최초 1회 본인 확인 -->
+    <div class="login-card" id="engineerVerifyCard" style="display:none;">
+      <h2>📧 최초 1회 본인 확인</h2>
+      <div class="login-sub" id="engVerifySub">본인 확인 메일을 보냈습니다</div>
+
+      <div style="background:#f1f5f9;border:1px solid #cbd5e1;border-radius:8px;padding:10px 12px;margin-bottom:16px;font-size:13px;color:#334155;text-align:center;">
+        <span id="engVerifyMasked" style="font-weight:700;"></span> 로 발송됨
+      </div>
+
+      <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:14px;margin-bottom:16px;font-size:13px;color:#1e40af;line-height:1.9;">
+        ① 메일함에서 <b>본인 확인 메일</b>을 엽니다<br>
+        ② 메일 안의 <b>링크를 누릅니다</b> — <b>휴대폰으로 눌러도 됩니다</b><br>
+        ③ 이 화면으로 돌아와 아래 <b>[확인 다 했어요]</b> 를 누릅니다
+      </div>
+
+      <button type="button" id="engVerifyDoneBtn" onclick="doEngineerVerifyCheck()"
+              style="width:100%;padding:14px;background:#4f46e5;color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:700;cursor:pointer;margin-bottom:8px;">
+        확인 다 했어요 → 로그인
+      </button>
+
+      <div style="display:flex;gap:8px;">
+        <button type="button" id="engVerifyResendBtn" onclick="doEngineerVerifyResend()"
+                style="flex:1;padding:12px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;cursor:pointer;font-size:13px;color:#334155;">
+          메일 재전송
+        </button>
+        <button type="button" onclick="engineerVerifyBackToLogin()"
+                style="flex:1;padding:12px;border:1px solid #cbd5e1;border-radius:8px;background:#fff;cursor:pointer;font-size:13px;color:#334155;">
+          ← 처음으로
+        </button>
+      </div>
+
+      <div class="login-error" id="engVerifyError"></div>
+
+      <div class="login-info">
+        💡 메일이 안 보이면 <b>스팸함</b>을 확인해주세요.<br>
+        💡 이 확인은 <b>한 번만</b> 하면 됩니다. 다음부터는 이 화면이 나오지 않습니다.
+      </div>
+    </div>
+
+    <!-- (2026-09-02) 메일 링크로 열린 새 창에 표시 — 원래 창이 이어받습니다 -->
+    <div class="login-card" id="hcAuthDoneCard" style="display:none;">
+      <h2>✅ 인증 완료</h2>
+      <div class="login-sub">이 창에서 할 일은 끝났습니다</div>
+
+      <div style="background:#ecfdf5;border:1px solid #a7f3d0;border-radius:8px;padding:16px;margin-bottom:16px;font-size:14px;color:#065f46;line-height:1.9;">
+        <b>처음에 열어둔 창으로 돌아가세요.</b><br>
+        그 창에서 자동으로 로그인이 진행됩니다.<br><br>
+        <b>이 창은 닫으셔도 됩니다.</b>
+      </div>
+
+      <button type="button" class="login-btn" id="hcAuthDoneBtn" onclick="doHcAuthContinueHere()">
+        원래 창이 안 보이면 → 이 창에서 계속하기
+      </button>
+
+      <div class="login-error" id="hcAuthDoneError"></div>
+
+      <div class="login-info">
+        💡 원래 창을 닫으셨다면 위 버튼을 눌러주세요.
+      </div>
+    </div>
+
+    <!-- (2026-09-02) 해피콜팀 비밀번호 새로 정하기 — 최초 1회 강제 -->
+    <div class="login-card" id="pwSetupCard" style="display:none;">
+      <h2>🔑 비밀번호를 새로 정해주세요</h2>
+      <div class="login-sub" id="pwSetupSub">보안 강화를 위해 한 번만 진행합니다</div>
+
+      <div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:12px 14px;margin-bottom:16px;font-size:13px;color:#78350f;line-height:1.8;">
+        지금까지는 전원이 <b>같은 비밀번호(1234)</b>를 쓰고 있었습니다.<br>
+        <b>새 비밀번호는 구글이 보관</b>하며, 회사 시스템에는 저장되지 않습니다.
+      </div>
+
+      <div class="field" style="margin-bottom:12px;">
+        <label style="display:block;font-size:13px;font-weight:600;color:#334155;margin-bottom:6px;">새 비밀번호</label>
+        <input type="password" id="pwSetupNew" autocomplete="new-password" placeholder="새 비밀번호 입력"
+               style="width:100%;padding:12px;border:1px solid #cbd5e1;border-radius:8px;font-size:15px;">
+      </div>
+      <div class="field" style="margin-bottom:12px;">
+        <label style="display:block;font-size:13px;font-weight:600;color:#334155;margin-bottom:6px;">새 비밀번호 확인</label>
+        <input type="password" id="pwSetupConfirm" autocomplete="new-password" placeholder="한 번 더 입력"
+               style="width:100%;padding:12px;border:1px solid #cbd5e1;border-radius:8px;font-size:15px;">
+      </div>
+
+      <div id="pwSetupRules" style="background:#f8fafc;border:1px solid #e2e8f0;border-radius:8px;padding:12px;margin-bottom:16px;font-size:13px;line-height:1.9;color:#475569;">
+        <div id="pwRuleLen">· 8자 이상</div>
+        <div id="pwRuleMix">· 대문자 / 소문자 / 숫자 / 특수문자 중 <b>3가지 이상</b> 포함</div>
+        <div id="pwRuleSimple">· 아이디와 같거나 너무 단순한 값은 사용 불가</div>
+        <div id="pwRuleMatch">· 두 칸의 값이 같아야 함</div>
+      </div>
+
+      <button type="button" class="login-btn" id="pwSetupBtn" onclick="doPwSetupSubmit()">비밀번호 설정하고 시작하기</button>
+
+      <div class="login-error" id="pwSetupError"></div>
+
+      <div class="login-info">
+        💡 이 비밀번호는 <b>본인만</b> 압니다. 관리자도 알 수 없습니다.<br>
+        💡 잊어버리면 관리자에게 초기화를 요청하시면 됩니다.
       </div>
     </div>
   </div>
@@ -4681,7 +4780,13 @@
     getAuth,
     sendSignInLinkToEmail,
     isSignInWithEmailLink,
-    signInWithEmailLink
+    signInWithEmailLink,
+    onAuthStateChanged,
+    signOut,
+    signInWithEmailAndPassword,
+    createUserWithEmailAndPassword,
+    sendEmailVerification,
+    updatePassword
   } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js";
 
   // ==================== Firebase 설정 ====================
@@ -5418,10 +5523,14 @@
             } catch(e) {}
           }
 
-          // 로그인 화면 숨기고 폼 표시
-          // (v22) F5 자동 로그인용 세션 저장
-          saveLoginSession({ type: 'nas', user: user, sid: NAS_SID, base: url });
-          enterApp(false);
+          // (2026-09-01) NAS 인증은 통과. 이제 Firebase 신원이 있는지 확인한다.
+          //   있으면 그대로 진입, 없으면 이 컴퓨터에서 최초 1회 본인 확인을 받는다.
+          //   ※ 세션 저장 / enterApp 호출은 engineerAfterNasAuth 안에서 처리됩니다.
+          engineerAfterNasAuth(user, url, pass).catch(function(e) {
+            console.error('[엔지니어 인증] 처리 중 오류:', e);
+            errEl.textContent = '본인 확인 처리 중 오류가 발생했습니다. 다시 시도해 주세요.';
+            errEl.classList.add('show');
+          });
         } else {
           errEl.textContent = '로그인 실패: 아이디 또는 비밀번호를 확인하세요.';
           errEl.classList.add('show');
@@ -5539,6 +5648,10 @@
     _emailAuthLastSend = null;
     if (_emailAuthCooldownTimer) clearInterval(_emailAuthCooldownTimer);
     try { localStorage.removeItem('inic_emailauth_pending'); } catch(e) {}
+    // (2026-09-01) 엔지니어 본인 확인 대기 중이었다면 그 대기도 취소
+    try { _engPendingVerify = null; } catch(e) {}
+    // (2026-09-02) 원래 창 이어받기 감시도 중지
+    try { hcAuthWatchStop(); _emailAuthOwnerTab = false; } catch(e) {}
     const card = document.getElementById('emailAuthCard');
     if (card) card.style.display = 'none';
     const isGithub = location.hostname.indexOf('github.io') !== -1;
@@ -5563,8 +5676,101 @@
       }));
     } catch(e) {}
     _emailAuthLastSend = { userId: userId, email: email };
+    // (2026-09-02) 이 창이 "인증을 시작한 원래 창"임을 표시하고, 완료를 기다린다
+    _emailAuthOwnerTab = true;
+    hcAuthWatchStart(userId, email);
     emailAuthShowCard(emailAuthMask(email));
   }
+
+  // ------------------------------------------------------------
+  // (2026-09-02) 원래 창이 로그인을 이어받게 하기
+  //
+  //   메일 링크를 누르면 브라우저가 새 창을 엽니다. 예전에는 그 새 창에서
+  //   로그인이 완료되어, 처음에 아이디를 입력했던 창은 그대로 남아 있었습니다.
+  //   → 창이 두 개가 되어 어느 쪽에서 일해야 하는지 헷갈린다는 불편이 있었습니다.
+  //
+  //   Firebase 인증 상태는 같은 주소의 창끼리 자동으로 공유되므로,
+  //   원래 창이 "새 로그인이 일어났는지"를 지켜보다가 스스로 이어받습니다.
+  //
+  //   ⚠️ 안전장치: 기다리기 시작한 시점 "이후에 새로 일어난 로그인"만 인정합니다.
+  //      예전에 로그인해 둔 흔적으로 그냥 통과되면 2차 인증이 무의미해집니다.
+  // ------------------------------------------------------------
+  let _emailAuthOwnerTab = false;
+  let _hcAuthWatchTimer = null;
+  let _hcAuthWatchSince = 0;
+
+  function hcAuthWatchStop() {
+    if (_hcAuthWatchTimer) { clearInterval(_hcAuthWatchTimer); _hcAuthWatchTimer = null; }
+  }
+
+  function hcAuthWatchStart(userId, email) {
+    hcAuthWatchStop();
+    _hcAuthWatchSince = Date.now();
+    const want = String(email || '').toLowerCase();
+    _hcAuthWatchTimer = setInterval(async () => {
+      try {
+        const u = fbAuth.currentUser;
+        if (!u || !u.email) return;
+        if (String(u.email).toLowerCase() !== want) return;
+        // 기다리기 시작한 뒤에 새로 로그인한 경우만 인정 (여유 5초)
+        const last = Date.parse((u.metadata && u.metadata.lastSignInTime) || 0);
+        if (!last || last < _hcAuthWatchSince - 5000) return;
+        hcAuthWatchStop();
+        try { localStorage.removeItem('inic_emailauth_pending'); } catch(e) {}
+        await hcAuthFinishInThisTab(u.email);
+      } catch (e) { console.warn('[이메일 인증] 이어받기 확인 중 오류:', e); }
+    }, 2000);
+  }
+
+  // 확인된 이메일로 신원을 찾아 이 창에서 로그인을 마무리한다
+  async function hcAuthFinishInThisTab(email) {
+    const identity = await emailAuthFindIdentity(email);
+    if (!identity) {
+      alert('이 이메일로 등록된 계정을 찾을 수 없습니다. 관리자에게 문의하세요.');
+      return false;
+    }
+    ['emailAuthCard', 'hcAuthDoneCard'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = 'none';
+    });
+    try { engineerMarkAuthOk(identity.id, email); } catch(e) {}
+
+    if (identity.kind === 'master') {
+      NAS_SID = '';
+      NAS_USER = identity.id;
+      NAS_BASE = '';
+      saveLoginSession({ type: 'master', user: identity.id, sid: '', base: '', role: 'master' });
+      enterApp(true);
+    } else if (identity.u && identity.u.password !== null && identity.u.password !== undefined) {
+      pwSetupShow(identity);
+      return true;
+    } else {
+      happycallEnterAfterAuth(identity);
+    }
+    setTimeout(() => { try { showToast('이메일 인증 완료 — 로그인되었습니다', 'success'); } catch(e) {} }, 300);
+    return true;
+  }
+
+  // 새 창에서 [이 창에서 계속하기]를 눌렀을 때 (원래 창을 닫아버린 경우)
+  window.doHcAuthContinueHere = async function() {
+    const btn = document.getElementById('hcAuthDoneBtn');
+    const err = document.getElementById('hcAuthDoneError');
+    if (err) err.classList.remove('show');
+    const u = fbAuth.currentUser;
+    if (!u || !u.email) {
+      if (err) { err.textContent = '인증 정보가 없습니다. 처음부터 다시 로그인해 주세요.'; err.classList.add('show'); }
+      return;
+    }
+    if (btn) { btn.disabled = true; btn.textContent = '로그인 중...'; }
+    try {
+      await hcAuthFinishInThisTab(u.email);
+    } catch (e) {
+      console.error('[이메일 인증] 이 창에서 계속하기 실패:', e);
+      if (err) { err.textContent = '로그인에 실패했습니다. 처음부터 다시 시도해 주세요.'; err.classList.add('show'); }
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '원래 창이 안 보이면 → 이 창에서 계속하기'; }
+    }
+  };
 
   // 재전송 버튼
   window.doEmailAuthResend = async function() {
@@ -5671,12 +5877,41 @@
       try { localStorage.removeItem('inic_emailauth_pending'); } catch(e) {}
       emailAuthCleanUrl();
 
+      // (2026-09-01) 엔지니어 환경(NAS 주소)에서 열린 창이면 여기서 멈춘다.
+      //   이 창에는 사진/영상 업로드에 필요한 NAS 세션(SID)이 없기 때문에,
+      //   여기서 로그인시켜 버리면 업로드가 전부 실패합니다.
+      //   ※ 엔지니어는 이제 이메일 링크를 쓰지 않으므로 정상적으로는 여기에 오지 않습니다.
+      //      (해피콜 계정의 링크를 NAS 화면에서 잘못 연 경우에만 도달)
+      if (!_isGithubPages) {
+        alert('이 화면은 엔지니어 전용입니다.\n해피콜 로그인은 깃허브 주소에서 진행해 주세요.');
+        return;
+      }
+
+      // (2026-09-02) 여기는 메일 링크로 새로 열린 창입니다.
+      //   원래 창(아이디를 입력한 그 창)이 인증 완료를 감지해 스스로 로그인합니다.
+      //   그래서 이 창에서는 로그인시키지 않고 "돌아가세요" 안내만 띄웁니다.
+      //   원래 창을 닫아버린 경우를 대비해 [이 창에서 계속하기] 버튼을 둡니다.
+      if (!_emailAuthOwnerTab) {
+        ['engineerLoginCard', 'happycallLoginCard', 'emailAuthCard'].forEach(id => {
+          const el = document.getElementById(id);
+          if (el) el.style.display = 'none';
+        });
+        const done = document.getElementById('hcAuthDoneCard');
+        if (done) done.style.display = '';
+        return;
+      }
+
       // 이메일로 계정 식별 (역할/이름/팀은 항상 Firestore 최신값 사용)
       const identity = await emailAuthFindIdentity(email);
       if (!identity) {
         alert('이 이메일로 등록된 계정을 찾을 수 없습니다. 관리자에게 문의하세요.');
         return;
       }
+
+      // (2026-09-02) 해피콜/마스터도 "창고 접근 준비 완료" 표시를 남긴다.
+      //   규칙을 잠그기 전에 users 목록에서 authOkAt 이 없는 사람만 골라내면
+      //   누가 아직 준비 안 됐는지 이름으로 확인할 수 있습니다.
+      try { engineerMarkAuthOk(identity.id, email); } catch(e) {}
 
       if (identity.kind === 'master') {
         NAS_SID = '';
@@ -5685,26 +5920,13 @@
         saveLoginSession({ type: 'master', user: identity.id, sid: '', base: '', role: 'master' });
         enterApp(true);
       } else {
-        const u = identity.u;
-        NAS_SID = '';
-        NAS_USER = identity.id;
-        NAS_BASE = '';
-        if (!window._adminRoleMap) window._adminRoleMap = {};
-        if (!window._adminUserNameMap) window._adminUserNameMap = {};
-        if (!window._adminUserTeamMap) window._adminUserTeamMap = {};
-        window._adminRoleMap[identity.id]     = u.role || 'happycall';
-        window._adminUserNameMap[identity.id] = u.name || identity.id;
-        window._adminUserTeamMap[identity.id] = u.team || '해피콜팀';
-        enterApp(false);
-        saveLoginSession({
-          type: 'happycall',
-          user: identity.id,
-          sid: '',
-          base: '',
-          role: u.role || 'happycall',
-          name: u.name || identity.id,
-          team: u.team || '해피콜팀'
-        });
+        // (2026-09-02) 아직 비밀번호를 옮기지 않은 사람은 여기서 새로 정하게 한다.
+        //   users 문서에 password 필드가 남아 있으면 = 아직 전환 전.
+        if (identity.u && identity.u.password !== null && identity.u.password !== undefined) {
+          pwSetupShow(identity);
+          return;
+        }
+        happycallEnterAfterAuth(identity);
       }
       setTimeout(() => { try { showToast('이메일 인증 완료 — 로그인되었습니다', 'success'); } catch(e) {} }, 300);
     } catch (err) {
@@ -5713,6 +5935,504 @@
       emailAuthCleanUrl();
     }
   })();
+
+  // ==================== (2026-09-01) 엔지니어 최초 1회 본인 확인 ====================
+  //
+  //  왜 필요한가
+  //  ----------------------------------------------------------------
+  //  고객정보가 들어 있는 Firebase(창고)의 문을 잠그려면, 문 앞에서 "당신 누구요"라고
+  //  물었을 때 대답할 수 있는 신원이 있어야 합니다.
+  //  해피콜팀은 이메일 인증을 하므로 신원이 있지만, 엔지니어는 NAS에만 로그인해서
+  //  Firebase 쪽에는 신원이 전혀 없습니다. 이대로 문을 잠그면 엔지니어 전원이 막힙니다.
+  //
+  //  왜 "이메일 링크" 방식을 못 쓰는가 (2026-09-01 실측으로 확인됨)
+  //  ----------------------------------------------------------------
+  //  이메일 링크 로그인은 "돌아올 주소"를 구글 승인 도메인에 등록해야 합니다.
+  //  그런데 구글은 IP 주소(192.168.0.59)를 콘솔 목록에 넣는 것은 허용해도
+  //  실제 검사에서는 거부합니다. (UNAUTHORIZED_DOMAIN, http/https 둘 다)
+  //    · inic01.github.io → 통과   · localhost → 통과   · 192.168.0.59 → 거부
+  //  NAS 서버 이름(INIC)으로도 사내에서 열리지 않아 도메인을 만들 수 없었습니다.
+  //  → 그래서 "돌아올 주소"가 아예 필요 없는 방식으로 바꿉니다.
+  //
+  //  바꾼 방식
+  //  ----------------------------------------------------------------
+  //  엔지니어가 NAS 로그인에 쓰는 그 비밀번호를 Firebase 신원에도 그대로 씁니다.
+  //  화면 뒤에서 처리하므로 엔지니어가 추가로 입력하거나 외울 것은 없습니다.
+  //
+  //  단, 이 방식은 "인터넷의 아무나 자기 이메일로 계정을 만들 수 있는" 구멍이
+  //  생기므로, 반드시 아래 두 가지를 함께 걸어야 합니다.
+  //    (1) 이메일 소유 확인(emailVerified) — 남의 이메일을 선점해도 통과 못 함
+  //    (2) 보안 규칙에서 직원 명단(staffEmails) 대조 — 외부인은 명단에 없음
+  //  ※ (2)는 규칙 잠그는 단계에서 함께 넣습니다. 이 파일만으로는 아직 미적용.
+  //
+  //  끄려면 아래 스위치를 false로 (그러면 예전처럼 NAS 인증만으로 로그인)
+  // ----------------------------------------------------------------
+  const ENGINEER_EMAIL_AUTH_ENABLED = true;
+
+  // Firebase는 비밀번호를 6자 이상으로 요구합니다. NAS 비밀번호가 그보다 짧을 수
+  // 있으므로 고정 꼬리표를 붙여 길이를 맞춥니다.
+  // 이 꼬리표는 비밀이 아닙니다 — 안전은 어디까지나 NAS 비밀번호에 달려 있습니다.
+  const ENGINEER_FB_PASS_SUFFIX = '#inicAS-v9';
+  function engineerDerivePassword(nasPass) {
+    return String(nasPass == null ? '' : nasPass) + ENGINEER_FB_PASS_SUFFIX;
+  }
+
+  // 본인 확인 대기 중 붙잡고 있는 정보 { nasUser, nasUrl, nasSid, email }
+  let _engPendingVerify = null;
+
+  // ------------------------------------------------------------
+  // (2026-09-02 수정 ①) 출입증(ID 토큰) 즉시 재발급
+  //
+  //   왜 필요한가 — 09-02 12:30 사고의 원인 후보
+  //   이메일 소유 확인을 마치면 화면(user.emailVerified)은 바로 true가 되지만,
+  //   Firestore 보안 규칙이 실제로 보는 것은 로그인할 때 발급된 "ID 토큰"입니다.
+  //   토큰은 대략 한 시간에 한 번만 자동 갱신되므로, 확인 직후의 토큰에는
+  //   여전히 email_verified: false 가 들어 있습니다.
+  //   → 규칙에서 email_verified 를 요구하면 그 사이 사람이 막힙니다.
+  //   getIdToken(true) 는 서버에서 토큰을 새로 받아옵니다. 이 한 줄이 빠져 있었습니다.
+  // ------------------------------------------------------------
+  async function engineerRefreshToken(user) {
+    try {
+      if (user && user.getIdToken) await user.getIdToken(true);
+    } catch (e) { console.warn('[본인확인] 출입증 갱신 실패(무시 가능):', e); }
+  }
+
+  // ------------------------------------------------------------
+  // (2026-09-02 수정 ②) 준비 완료 표시 남기기
+  //
+  //   왜 필요한가 — "누가 준비됐는지" 확인할 방법이 없어서 09-02 사고가 났습니다.
+  //   "다 됐다"는 말에 기대어 규칙을 잠갔고, 안 된 사람을 미리 못 걸러냈습니다.
+  //
+  //   이 기록은 Firestore 쓰기이므로 "창고 접근이 실제로 되는 사람"만 남길 수 있습니다.
+  //   즉 authOkAt 이 찍혀 있다 = 그 사람은 규칙을 잠가도 안전하다는 증거입니다.
+  //   잠그기 전에 users 목록에서 이 값이 없는 사람만 골라내면 됩니다.
+  // ------------------------------------------------------------
+  async function engineerMarkAuthOk(userDocId, email) {
+    try {
+      await updateDoc(doc(db, 'users', userDocId), {
+        authOkAt: serverTimestamp(),
+        authEmail: String(email || '').toLowerCase()
+      });
+    } catch (e) { console.warn('[본인확인] 준비 표시 기록 실패(무시 가능):', e); }
+  }
+
+  // NAS 계정 이름으로 users 문서를 찾아 등록된 이메일을 가져온다.
+  //   1) 문서 이름이 NAS 계정과 같은 경우 (대부분)
+  //   2) 대소문자만 다른 경우 (예: HoChulKim ↔ hochulkim)
+  async function engineerLookupEmail(nasUser) {
+    try {
+      const snap = await getDoc(doc(db, 'users', nasUser));
+      if (snap.exists()) {
+        const u = snap.data();
+        const e = String(u.email || '').trim();
+        return { id: nasUser, email: e.includes('@') ? e : '', name: u.name || nasUser };
+      }
+    } catch (e) { console.warn('[본인확인] 문서 직접 조회 실패:', e); }
+    try {
+      const lower = String(nasUser || '').toLowerCase();
+      const all = await getDocs(collection(db, 'users'));
+      for (const d of all.docs) {
+        if (d.id.toLowerCase() === lower) {
+          const u = d.data();
+          const e = String(u.email || '').trim();
+          return { id: d.id, email: e.includes('@') ? e : '', name: u.name || d.id };
+        }
+      }
+    } catch (e) { console.warn('[본인확인] 대소문자 재탐색 실패:', e); }
+    return null;
+  }
+
+  function engVerifyShowError(text) {
+    const el = document.getElementById('engVerifyError');
+    if (!el) return;
+    el.textContent = text;
+    el.classList.add('show');
+  }
+  function engVerifyClearError() {
+    const el = document.getElementById('engVerifyError');
+    if (el) el.classList.remove('show');
+  }
+
+  // 본인 확인 대기 카드 표시
+  function engineerShowVerifyCard(masked, name) {
+    const eng  = document.getElementById('engineerLoginCard');
+    const hc   = document.getElementById('happycallLoginCard');
+    const card = document.getElementById('engineerVerifyCard');
+    if (eng)  eng.style.display  = 'none';
+    if (hc)   hc.style.display   = 'none';
+    if (card) card.style.display = '';
+    const m = document.getElementById('engVerifyMasked');
+    if (m) m.textContent = masked || '등록된 이메일';
+    const sub = document.getElementById('engVerifySub');
+    if (sub) sub.textContent = (name ? name + '님 — ' : '') + '이 계정은 본인 확인이 한 번 필요합니다';
+    engVerifyClearError();
+  }
+
+  // 처음으로 돌아가기
+  window.engineerVerifyBackToLogin = function() {
+    _engPendingVerify = null;
+    const card = document.getElementById('engineerVerifyCard');
+    if (card) card.style.display = 'none';
+    const eng = document.getElementById('engineerLoginCard');
+    const hc  = document.getElementById('happycallLoginCard');
+    const isGithub = location.hostname.indexOf('github.io') !== -1;
+    if (isGithub) { if (hc) hc.style.display = ''; }
+    else { if (eng) eng.style.display = ''; if (hc) hc.style.display = 'none'; }
+  };
+
+  // 확인이 끝난 뒤 로그인 마무리 (NAS 세션 그대로 사용)
+  function engineerCompleteLogin(p) {
+    NAS_SID  = p.nasSid || '';
+    NAS_USER = p.nasUser;
+    NAS_BASE = p.nasUrl || '';
+    const card = document.getElementById('engineerVerifyCard');
+    if (card) card.style.display = 'none';
+    saveLoginSession({ type: 'nas', user: p.nasUser, sid: NAS_SID, base: NAS_BASE });
+    enterApp(false);
+    setTimeout(() => { try { showToast('본인 확인 완료 — 로그인되었습니다', 'success'); } catch(e) {} }, 300);
+  }
+
+  // [확인 다 했어요] 버튼 — 구글에 다시 물어보고 확인됐으면 로그인
+  window.doEngineerVerifyCheck = async function() {
+    const btn = document.getElementById('engVerifyDoneBtn');
+    if (!_engPendingVerify) {
+      engVerifyShowError('로그인 정보가 사라졌습니다. 처음으로 돌아가 다시 로그인해 주세요.');
+      return;
+    }
+    engVerifyClearError();
+    if (btn) { btn.disabled = true; btn.textContent = '확인 중...'; }
+    try {
+      const u = fbAuth.currentUser;
+      if (!u) throw new Error('no-current-user');
+      await u.reload();
+      if (u.emailVerified) {
+        // ⚠️ reload()는 화면 상태만 갱신합니다. 규칙이 보는 출입증(ID 토큰)은
+        //    따로 새로 받아와야 합니다. 이 줄이 없어서 09-02에 사람이 막혔습니다.
+        await engineerRefreshToken(u);
+        const p = _engPendingVerify;
+        _engPendingVerify = null;
+        await engineerMarkAuthOk(p.userDocId || p.nasUser, p.email);
+        engineerCompleteLogin(p);
+        return;
+      }
+      engVerifyShowError('아직 확인되지 않았습니다. 메일의 링크를 누르신 뒤 다시 눌러주세요. (스팸함도 확인)');
+    } catch (e) {
+      console.error('[본인확인] 확인 실패:', e);
+      engVerifyShowError('확인에 실패했습니다. 처음으로 돌아가 다시 로그인해 주세요.');
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '확인 다 했어요 → 로그인'; }
+    }
+  };
+
+  // 확인 메일 재전송
+  window.doEngineerVerifyResend = async function() {
+    const btn = document.getElementById('engVerifyResendBtn');
+    if (!_engPendingVerify || !fbAuth.currentUser) {
+      engVerifyShowError('로그인 정보가 사라졌습니다. 처음으로 돌아가 다시 로그인해 주세요.');
+      return;
+    }
+    engVerifyClearError();
+    if (btn) { btn.disabled = true; btn.textContent = '발송 중...'; }
+    try {
+      await sendEmailVerification(fbAuth.currentUser);
+      try { showToast('본인 확인 메일을 다시 보냈습니다', 'success'); } catch(e) {}
+    } catch (e) {
+      console.error('[본인확인] 재전송 실패:', e);
+      engVerifyShowError(engineerAuthErrorMessage(e));
+    } finally {
+      if (btn) { btn.disabled = false; btn.textContent = '메일 재전송'; }
+    }
+  };
+
+  // 오류 코드 → 사람이 읽을 수 있는 한국어
+  function engineerAuthErrorMessage(err) {
+    const code = String((err && err.code) || '');
+    if (code.includes('too-many-requests')) {
+      return '시도가 너무 잦습니다. 잠시 후 다시 로그인해 주세요.';
+    }
+    if (code.includes('network-request-failed')) {
+      return '인터넷 연결이 불안정합니다. 잠시 후 다시 시도해 주세요.';
+    }
+    if (code.includes('operation-not-allowed')) {
+      return '구글 설정이 필요합니다. IT팀에 문의해 주세요. (이메일/비밀번호 로그인 미사용)';
+    }
+    if (code.includes('invalid-email')) {
+      return '등록된 이메일 형식이 올바르지 않습니다. IT팀에 수정을 요청해 주세요.';
+    }
+    return '본인 확인 처리에 실패했습니다. IT팀에 문의해 주세요. (' + code + ')';
+  }
+
+  // NAS 인증 통과 후 호출됨.
+  //   Firebase 신원이 있고 이메일 확인까지 끝나 있으면 그대로 통과(2회차 이후),
+  //   아니면 최초 1회 본인 확인 절차를 진행한다.
+  async function engineerAfterNasAuth(nasUser, nasUrl, nasPass) {
+    const errEl = document.getElementById('loginError');
+    const finish = function() {
+      saveLoginSession({ type: 'nas', user: nasUser, sid: NAS_SID, base: nasUrl });
+      enterApp(false);
+    };
+    const fail = function(msg) {
+      if (errEl) { errEl.textContent = msg; errEl.classList.add('show'); }
+    };
+
+    if (!ENGINEER_EMAIL_AUTH_ENABLED) { finish(); return; }
+
+    let info = null;
+    try { info = await engineerLookupEmail(nasUser); } catch (e) {}
+
+    // 이메일을 못 찾으면 업무가 막히지 않도록 통과시키되 경고만 남긴다.
+    // (규칙을 잠근 뒤에는 창고 접근이 안 되므로 자연히 걸러집니다)
+    if (!info || !info.email) {
+      console.warn('[본인확인] 등록된 이메일 없음 — 건너뜀:', nasUser);
+      try { showToast('이 계정에 이메일이 등록돼 있지 않습니다. IT팀에 등록을 요청하세요.', 'error'); } catch(e) {}
+      finish();
+      return;
+    }
+
+    const email  = info.email;
+    const fbPass = engineerDerivePassword(nasPass);
+
+    // 이미 이 브라우저에서 같은 사람으로 확인이 끝나 있으면 바로 통과
+    const cur = fbAuth.currentUser;
+    if (cur && cur.email && String(cur.email).toLowerCase() === email.toLowerCase() && cur.emailVerified) {
+      await engineerRefreshToken(cur);          // 출입증 새로 받아오기
+      engineerMarkAuthOk(info.id, email);       // 준비 완료 표시 (기다리지 않음)
+      finish();
+      return;
+    }
+    // 다른 사람 흔적이 남아 있으면 지운다 (공용 PC 대비)
+    if (cur && cur.email && String(cur.email).toLowerCase() !== email.toLowerCase()) {
+      try { await signOut(fbAuth); } catch(e) {}
+    }
+
+    // Firebase 신원 확보 — 있으면 로그인, 없으면 생성
+    let cred = null;
+    try {
+      cred = await signInWithEmailAndPassword(fbAuth, email, fbPass);
+    } catch (e1) {
+      const c1 = String((e1 && e1.code) || '').toLowerCase();
+      const looksLikeNoAccountOrWrongPass =
+        c1.includes('user-not-found') || c1.includes('wrong-password') ||
+        c1.includes('invalid-credential') || c1.includes('invalid-login-credentials');
+      if (!looksLikeNoAccountOrWrongPass) {
+        console.error('[본인확인] 로그인 실패:', e1);
+        fail(engineerAuthErrorMessage(e1));
+        return;
+      }
+      try {
+        cred = await createUserWithEmailAndPassword(fbAuth, email, fbPass);
+      } catch (e2) {
+        const c2 = String((e2 && e2.code) || '').toLowerCase();
+        if (c2.includes('email-already-in-use')) {
+          // 계정은 있는데 비밀번호가 맞지 않음 = NAS 비밀번호를 바꾸신 경우.
+          //   업무가 멈추지 않도록 로그인은 시켜드리고 경고만 남깁니다.
+          //   (규칙을 잠근 뒤에는 창고 접근이 안 되므로 IT팀이 정리해야 합니다)
+          console.warn('[본인확인] 비밀번호 불일치 — 통과시킴:', nasUser);
+          try { showToast('NAS 비밀번호를 바꾸셨나요? 본인 확인 정보를 다시 만들어야 합니다. IT팀에 알려주세요.', 'error'); } catch(e) {}
+          finish();
+          return;
+        }
+        if (c2.includes('weak-password')) {
+          console.warn('[본인확인] 비밀번호가 짧아 계정 생성 불가 — 통과시킴:', nasUser);
+          try { showToast('본인 확인을 만들 수 없습니다. IT팀에 문의해 주세요.', 'error'); } catch(e) {}
+          finish();
+          return;
+        }
+        console.error('[본인확인] 계정 생성 실패:', e2);
+        fail(engineerAuthErrorMessage(e2));
+        return;
+      }
+    }
+
+    const user = cred && cred.user;
+    if (!user) { fail('본인 확인 처리에 실패했습니다. 다시 시도해 주세요.'); return; }
+
+    // 이메일 소유 확인이 끝나 있으면 그대로 통과
+    if (user.emailVerified) {
+      await engineerRefreshToken(user);
+      engineerMarkAuthOk(info.id, email);
+      finish();
+      return;
+    }
+
+    // 최초 1회 — 확인 메일 발송 후 대기 카드로
+    _engPendingVerify = { nasUser: nasUser, nasUrl: nasUrl, nasSid: NAS_SID, email: email, userDocId: info.id };
+    try {
+      await sendEmailVerification(user);
+      engineerShowVerifyCard(emailAuthMask(email), info.name);
+    } catch (e3) {
+      console.error('[본인확인] 확인 메일 발송 실패:', e3);
+      _engPendingVerify = null;
+      fail(engineerAuthErrorMessage(e3));
+    }
+  }
+
+  // ==================== (2026-09-02) 해피콜 비밀번호 이관 ====================
+  //
+  //  왜 필요한가
+  //  ----------------------------------------------------------------
+  //  해피콜팀 12명의 비밀번호가 users 문서에 "글자 그대로" 적혀 있고, 전원 `1234`
+  //  입니다. 그리고 로그인 화면이 로그인 전에 users를 읽어야 해서 이 칸은 외부에서도
+  //  그대로 읽힙니다. (2026-09-02 실측: 로그인 없이 12건 조회됨)
+  //  → 비밀번호만 새로 바꿔봐야 그 새 값이 다시 그 자리에 적힐 뿐입니다.
+  //  → 보관 장소 자체를 구글로 옮기고, 창고에서는 그 칸을 지웁니다.
+  //
+  //  전환 순서 (직원 입장에서는 딱 한 번)
+  //    1) 예전대로 아이디 + 1234 로 로그인 → 이메일 인증 (기존과 동일)
+  //    2) "비밀번호를 새로 정해주세요" 화면 → 본인이 직접 정함
+  //    3) 구글에 저장 + users 문서의 password 칸 삭제
+  //    4) 다음부터는 새 비밀번호를 구글이 검증 (창고에 비밀번호 없음)
+  // ----------------------------------------------------------------
+
+  let _pwSetupPending = null;   // { id, u }
+
+  // 비밀번호 규칙 — 8자 이상 + 4종류(대문자/소문자/숫자/특수문자) 중 3가지 이상
+  function pwPolicyCheck(pw, userId) {
+    const s = String(pw || '');
+    const kinds =
+      (/[A-Z]/.test(s) ? 1 : 0) +
+      (/[a-z]/.test(s) ? 1 : 0) +
+      (/[0-9]/.test(s) ? 1 : 0) +
+      (/[^A-Za-z0-9]/.test(s) ? 1 : 0);
+    const simple = ['1234','12345678','password','qwerty','abcd1234','1q2w3e4r','asdf1234'];
+    const lower = s.toLowerCase();
+    return {
+      len:    s.length >= 8,
+      mix:    kinds >= 3,
+      simple: !(simple.includes(lower) || (userId && lower === String(userId).toLowerCase()) || /^(.)\1+$/.test(s)),
+      kinds:  kinds
+    };
+  }
+
+  // 규칙 안내 줄에 통과/미통과 표시
+  function pwSetupPaintRules() {
+    const pw = (document.getElementById('pwSetupNew') || {}).value || '';
+    const cf = (document.getElementById('pwSetupConfirm') || {}).value || '';
+    const r = pwPolicyCheck(pw, _pwSetupPending && _pwSetupPending.id);
+    const paint = (id, ok, text) => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.style.color = pw ? (ok ? '#15803d' : '#b91c1c') : '#475569';
+      el.innerHTML = (pw ? (ok ? '✅ ' : '❌ ') : '· ') + text;
+    };
+    paint('pwRuleLen', r.len, '8자 이상');
+    paint('pwRuleMix', r.mix, '대문자 / 소문자 / 숫자 / 특수문자 중 <b>3가지 이상</b> 포함 (현재 ' + r.kinds + '가지)');
+    paint('pwRuleSimple', r.simple, '아이디와 같거나 너무 단순한 값은 사용 불가');
+    paint('pwRuleMatch', !!pw && pw === cf, '두 칸의 값이 같아야 함');
+  }
+
+  function pwSetupShowError(text) {
+    const el = document.getElementById('pwSetupError');
+    if (!el) return;
+    el.textContent = text;
+    el.classList.add('show');
+  }
+
+  // 비밀번호 설정 화면 표시
+  function pwSetupShow(identity) {
+    _pwSetupPending = identity;
+    ['engineerLoginCard','happycallLoginCard','emailAuthCard','engineerVerifyCard'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.style.display = 'none';
+    });
+    const card = document.getElementById('pwSetupCard');
+    if (card) card.style.display = '';
+    const sub = document.getElementById('pwSetupSub');
+    const nm = (identity.u && identity.u.name) || identity.id;
+    if (sub) sub.textContent = nm + '님 — 보안 강화를 위해 한 번만 진행합니다';
+    const err = document.getElementById('pwSetupError');
+    if (err) err.classList.remove('show');
+    ['pwSetupNew','pwSetupConfirm'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) { el.value = ''; el.oninput = pwSetupPaintRules; }
+    });
+    pwSetupPaintRules();
+    setTimeout(() => { const el = document.getElementById('pwSetupNew'); if (el) el.focus(); }, 100);
+  }
+
+  // 로그인 마무리 (비밀번호 전환이 끝난 사람 / 이미 전환된 사람 공통)
+  function happycallEnterAfterAuth(identity) {
+    const u = identity.u || {};
+    NAS_SID = '';
+    NAS_USER = identity.id;
+    NAS_BASE = '';
+    if (!window._adminRoleMap)     window._adminRoleMap = {};
+    if (!window._adminUserNameMap) window._adminUserNameMap = {};
+    if (!window._adminUserTeamMap) window._adminUserTeamMap = {};
+    window._adminRoleMap[identity.id]     = u.role || 'happycall';
+    window._adminUserNameMap[identity.id] = u.name || identity.id;
+    window._adminUserTeamMap[identity.id] = u.team || '해피콜팀';
+    enterApp(false);
+    saveLoginSession({
+      type: 'happycall',
+      user: identity.id,
+      sid: '',
+      base: '',
+      role: u.role || 'happycall',
+      name: u.name || identity.id,
+      team: u.team || '해피콜팀'
+    });
+  }
+
+  // [비밀번호 설정하고 시작하기]
+  window.doPwSetupSubmit = async function() {
+    if (!_pwSetupPending) {
+      pwSetupShowError('로그인 정보가 사라졌습니다. 처음으로 돌아가 다시 로그인해 주세요.');
+      return;
+    }
+    const btn = document.getElementById('pwSetupBtn');
+    const pw  = (document.getElementById('pwSetupNew') || {}).value || '';
+    const cf  = (document.getElementById('pwSetupConfirm') || {}).value || '';
+    const r   = pwPolicyCheck(pw, _pwSetupPending.id);
+
+    if (!r.len)    { pwSetupShowError('8자 이상으로 정해주세요.'); return; }
+    if (!r.mix)    { pwSetupShowError('대문자·소문자·숫자·특수문자 중 3가지 이상을 섞어주세요.'); return; }
+    if (!r.simple) { pwSetupShowError('너무 단순한 비밀번호입니다. 다른 값으로 정해주세요.'); return; }
+    if (pw !== cf) { pwSetupShowError('두 칸의 값이 다릅니다.'); return; }
+
+    const user = fbAuth.currentUser;
+    if (!user) {
+      pwSetupShowError('인증이 만료되었습니다. 처음으로 돌아가 다시 로그인해 주세요.');
+      return;
+    }
+
+    if (btn) { btn.disabled = true; btn.textContent = '설정 중...'; }
+    try {
+      // 1) 구글에 새 비밀번호 저장
+      await updatePassword(user, pw);
+      // 2) 창고에서 비밀번호 칸 삭제 ← 이게 핵심입니다
+      try {
+        await updateDoc(doc(db, 'users', _pwSetupPending.id), {
+          password: deleteField(),
+          passwordChanged: true,
+          passwordChangedAt: serverTimestamp(),
+          authOkAt: serverTimestamp(),
+          authEmail: String(user.email || '').toLowerCase()
+        });
+      } catch (delErr) {
+        // 창고 정리에 실패해도 구글 비밀번호는 이미 바뀌었습니다.
+        // 다음 로그인은 새 비밀번호로 됩니다. 관리자에게만 알립니다.
+        console.error('[비밀번호 이관] users.password 삭제 실패:', delErr);
+      }
+      const identity = _pwSetupPending;
+      _pwSetupPending = null;
+      const card = document.getElementById('pwSetupCard');
+      if (card) card.style.display = 'none';
+      happycallEnterAfterAuth(identity);
+      setTimeout(() => { try { showToast('비밀번호가 설정되었습니다', 'success'); } catch(e) {} }, 300);
+    } catch (err) {
+      const code = String((err && err.code) || '').toLowerCase();
+      console.error('[비밀번호 이관] 설정 실패:', err);
+      if (code.includes('weak-password')) {
+        pwSetupShowError('구글이 거부한 비밀번호입니다. 다른 값으로 정해주세요.');
+      } else if (code.includes('requires-recent-login')) {
+        pwSetupShowError('인증이 만료되었습니다. 처음으로 돌아가 다시 로그인해 주세요.');
+      } else {
+        pwSetupShowError('비밀번호 설정에 실패했습니다. 다시 시도해 주세요. (' + code + ')');
+      }
+      if (btn) { btn.disabled = false; btn.textContent = '비밀번호 설정하고 시작하기'; }
+    }
+  };
 
   // ==================== (v20) 해피콜 로그인 ====================
   // Firestore users 컬렉션 직접 조회 (NAS 미사용)
@@ -5774,12 +6494,48 @@
         return;
       }
 
-      // password 필드 비교 (기존 가입자는 '1234' 자동 세팅됨)
-      const dbPass = (u.password == null) ? '1234' : u.password;
-      if (String(dbPass) !== String(pass)) {
-        errEl.textContent = '비밀번호가 일치하지 않습니다.';
-        errEl.classList.add('show');
-        return;
+      // ------------------------------------------------------------
+      // (2026-09-02) 비밀번호 검증 — 두 갈래
+      //
+      //   ㉠ 아직 전환 전 (users 문서에 password 필드가 남아 있는 사람)
+      //      → 예전처럼 창고에 적힌 값과 비교합니다.
+      //        ⚠️ 이 값은 지금도 외부에서 그대로 읽힙니다. 그래서 로그인 직후
+      //           비밀번호를 새로 정하게 하고 이 필드를 지웁니다.
+      //
+      //   ㉡ 전환 완료 (password 필드가 없는 사람)
+      //      → 구글이 보관한 비밀번호로 검증합니다. 창고에는 비밀번호가 없습니다.
+      //
+      //   전원이 ㉡로 넘어가면 창고에서 비밀번호가 완전히 사라집니다.
+      // ------------------------------------------------------------
+      const _hcNeedsMigration = (u.password !== null && u.password !== undefined);
+      const _hcEmailForAuth = String(u.email || '').trim();
+
+      if (_hcNeedsMigration) {
+        if (String(u.password) !== String(pass)) {
+          errEl.textContent = '비밀번호가 일치하지 않습니다.';
+          errEl.classList.add('show');
+          return;
+        }
+      } else {
+        if (!_hcEmailForAuth.includes('@')) {
+          errEl.textContent = '이 계정에 이메일이 등록되어 있지 않습니다. 관리자에게 문의하세요.';
+          errEl.classList.add('show');
+          return;
+        }
+        try {
+          await signInWithEmailAndPassword(fbAuth, _hcEmailForAuth, pass);
+        } catch (pwErr) {
+          const pc = String((pwErr && pwErr.code) || '').toLowerCase();
+          if (pc.includes('too-many-requests')) {
+            errEl.textContent = '시도가 너무 잦습니다. 잠시 후 다시 시도해 주세요.';
+          } else if (pc.includes('network')) {
+            errEl.textContent = '인터넷 연결이 불안정합니다. 잠시 후 다시 시도해 주세요.';
+          } else {
+            errEl.textContent = '비밀번호가 일치하지 않습니다.';
+          }
+          errEl.classList.add('show');
+          return;
+        }
       }
 
       // 통과 — NAS 미사용 모드로 진입
@@ -17109,6 +17865,52 @@
     }
   };
 
+  // ------------------------------------------------------------
+  // (2026-09-02) 직원 명단(staffEmails) 자동 관리
+  //
+  //   staffEmails = 창고 문지기가 들고 있는 명단입니다.
+  //   여기 없는 사람은 로그인이 되더라도 자료를 하나도 못 봅니다.
+  //
+  //   예전에는 이 명단을 손으로 관리해야 했지만, 이제 직원 등록·수정·퇴사 처리를
+  //   하면 자동으로 같이 맞춰집니다. 관리자가 따로 할 일은 없습니다.
+  //
+  //   처리 내용
+  //     · 신규 등록 / 활성화        → 명단에 추가
+  //     · 이메일 변경               → 예전 주소 삭제 후 새 주소 추가
+  //     · 비활성(퇴사) 처리         → 명단에서 삭제
+  // ------------------------------------------------------------
+  async function syncStaffEmail(opts) {
+    const norm = e => String(e || '').trim().toLowerCase();
+    const email = norm(opts.email);
+    const oldEmail = norm(opts.oldEmail);
+    try {
+      // 이메일이 바뀌었으면 예전 주소를 명단에서 뺀다
+      if (oldEmail && oldEmail !== email) {
+        try { await deleteDoc(doc(db, 'staffEmails', oldEmail)); } catch(e) {}
+      }
+      // 퇴사(비활성)거나 이메일이 없으면 명단에서 뺀다
+      if (opts.active === false || !email.includes('@')) {
+        if (email.includes('@')) {
+          try { await deleteDoc(doc(db, 'staffEmails', email)); } catch(e) {}
+        }
+        return;
+      }
+      await setDoc(doc(db, 'staffEmails', email), {
+        name:   opts.name || '',
+        team:   opts.team || '',
+        role:   opts.role || '',
+        userId: opts.id   || '',
+        addedAt: serverTimestamp(),
+        addedBy: NAS_USER || 'master'
+      });
+    } catch (e) {
+      console.error('[직원 명단] 반영 실패:', e);
+      try {
+        showToast('직원 명단 반영에 실패했습니다. 그 직원은 자료 조회가 안 될 수 있습니다. IT팀에 알려주세요.', 'error');
+      } catch(_) {}
+    }
+  }
+
   async function adminSaveStaff(docId) {
     const role = document.getElementById('adminFormStaffRole').value;
     const name = (document.getElementById('adminFormStaffName').value || '').trim();
@@ -17215,6 +18017,12 @@
         updateData.passwordChanged = null;
       }
       await updateDoc(doc(db, 'users', docId), updateData);
+      // (2026-09-02) 창고 출입 명단도 같이 맞춘다 (이메일이 바뀌었으면 예전 주소 정리)
+      await syncStaffEmail({
+        id: docId, name, team, role, email,
+        oldEmail: before && before.email,
+        active: before ? (before.active !== false) : true
+      });
       await adminLogHistory('users', docId, 'update', before, { name, role, team, primaryCategory, extraCategories, usesNas, startTime });
       showToast('직원 정보 수정 완료', 'success');
     } else {
@@ -17237,6 +18045,8 @@
         data.passwordChanged = false;
       }
       await setDoc(doc(db, 'users', id), data);
+      // (2026-09-02) 창고 출입 명단에 자동 추가 — 이게 없으면 그 직원은 자료를 못 봅니다
+      await syncStaffEmail({ id, name, team, role, email, active: true });
       await adminLogHistory('users', id, 'create', null, { id, name, role, team, primaryCategory, extraCategories, usesNas, startTime });
       showToast(usesNas ? '직원 등록 완료 (NAS 인증)' : `직원 등록 완료 (초기 비번: 1234)`, 'success');
     }
@@ -17254,6 +18064,10 @@
     const user = NAS_USER || 'master';
     await updateDoc(doc(db, 'users', docId), {
       active, updatedAt: serverTimestamp(), updatedBy: user
+    });
+    // (2026-09-02) 퇴사 처리하면 창고 출입 명단에서도 빠지고, 복직하면 다시 들어간다
+    await syncStaffEmail({
+      id: docId, name: u.name, team: u.team, role: u.role, email: u.email, active: active
     });
     await adminLogHistory('users', docId, active ? 'activate' : 'deactivate', u, { active });
     showToast(`직원 ${active ? '활성화' : '비활성화'} 완료`, 'success');
@@ -19834,6 +20648,14 @@
           bg: '#1D9E75',
           action: () => dashActionASBosangPayDone(c)
         });
+      } else if (c.discardRequested) {
+        // (2026-09-02) 폐기 건 — 입금과 폐기동의서 회신을 함께 확인하고 처리대기로
+        buttons.push({
+          id: 'actDiscardPayDone',
+          label: '✅ 입금완료 + 폐기동의서 회신완료 → 처리대기',
+          bg: '#1D9E75',
+          action: () => dashActionASDiscardPayDone(c)
+        });
       } else {
         buttons.push({
           id: 'actDepositDone',
@@ -19943,7 +20765,7 @@
           action: () => dashActionASBosang(c)
         });
         buttons.push({
-          id: 'actDiscard', label: '🗑️ 폐기요청 → 처리대기', bg: '#6b7280',
+          id: 'actDiscard', label: '🗑️ 폐기요청 → 입금대기', bg: '#6b7280',
           action: () => dashActionASDiscard(c)
         });
         buttons.push({
@@ -20243,33 +21065,83 @@
     // (v27) AS 입고 차감 이력 — 원래 입고된 날짜에서 -1
     await asIntakeRecordAdjustment(c, '보상판매');
   }
-  // 유상 해피콜대기 → 폐기요청 → 처리대기
-  async function dashActionASDiscard(c) {
-    if (!confirm('폐기 처리로 진행할까요?\n\n처리대기로 이동합니다.')) return;
+  // ------------------------------------------------------------
+  // (2026-09-02 변경) 유상 해피콜대기 → [폐기요청] → 입금대기
+  //
+  //   왜 바꿨나 (해피콜팀 조유림 님 요청)
+  //     예전에는 폐기요청을 누르면 곧바로 "처리대기"로 넘어갔습니다.
+  //     그런데 처리대기는 엔지니어 영역이라 해피콜 손을 떠나버립니다.
+  //     실제로는 그때부터 고객의 폐기동의서 회신과 입금을 기다려야 하는데,
+  //     화면에서 사라지니 관리가 안 되고, 엔지니어가 먼저 완료 처리해버리는
+  //     사고까지 있었습니다.
+  //
+  //   바뀐 흐름
+  //     해피콜대기 →[폐기요청]→ 입금대기   (상태: 폐기요청)
+  //     입금대기   →[입금완료]→ 처리대기   (상태: 입금완료 + 폐기동의서 회신완료)
+  //
+  //   금액 기준 (회사 결정 2026-09-02)
+  //     수리를 안 하므로 부품비는 청구하지 않고, "편도 택배비"만 청구합니다.
+  //     금액을 바꾸려면 아래 상수 한 줄만 고치면 됩니다.
+  //     (코드상 3,200원 = 편도택배비, 6,400원 = 왕복택배비로 표시됩니다)
+  // ------------------------------------------------------------
+  const DISCARD_ONEWAY_DELIVERY_FEE = 3200;   // 폐기 시 청구할 편도 택배비
 
-    // 사용부품 총 금액 — partsUsed 직접 합산 (폐기는 택배비 제외)
+  async function dashActionASDiscard(c) {
+    const feeStr = DISCARD_ONEWAY_DELIVERY_FEE.toLocaleString() + '원';
+    if (!confirm(
+      '폐기 처리로 진행할까요?\n\n' +
+      '· 입금대기로 이동합니다 (상태: 폐기요청)\n' +
+      '· 부품비는 청구하지 않습니다\n' +
+      '· 편도 택배비 ' + feeStr + '이 청구 금액으로 남습니다\n\n' +
+      '고객의 폐기동의서 회신과 입금을 받은 뒤 [입금완료]를 눌러주세요.'
+    )) return;
+
+    // 부품비는 미수긍으로 청구하지 않음 — 안내 문구에는 원래 금액을 남겨둔다
     const _discardParts = Array.isArray(c.partsUsed) ? c.partsUsed : [];
     const _discardSum = _discardParts.reduce((s, p) => s + (Number(p.price||0) * Number(p.qty||p.quantity||1)), 0);
     const totalStr2 = _discardSum > 0 ? `${_discardSum.toLocaleString()}원` : '금액 미정';
-    const newTreatment = `${totalStr2} 비용 미수긍, 폐기요청으로 폐기진행해주세요.`;
+    const newTreatment = `${totalStr2} 비용 미수긍, 폐기요청으로 폐기진행해주세요. (편도 택배비 ${feeStr} 청구)`;
 
     const userNote = dashGetActionNote();
-    await dashApplyStageChange(c, '처리대기', {
+    await dashApplyStageChange(c, '입금대기', {
       note: userNote || '폐기요청',
       role: 'happycall',
       actionLabel: '폐기요청',
       actionStatusOp: 'append',
-      actionStatusValue: '폐기동의서 회신대기중',
+      actionStatusValue: '폐기요청',
       extraFields: {
         discardRequested: true,
         treatmentContent: newTreatment,
         partsUsed: [],
         partsTotal: 0,
-        deliveryFee: 0
+        deliveryFee: DISCARD_ONEWAY_DELIVERY_FEE
       }
     });
     // (v27) AS 입고 차감 이력 — 원래 입고된 날짜에서 -1
     await asIntakeRecordAdjustment(c, '폐기');
+  }
+
+  // (2026-09-02) 폐기 건 입금대기 → [입금완료 + 폐기동의서 회신완료] → 처리대기
+  async function dashActionASDiscardPayDone(c) {
+    if (!confirm(
+      '입금과 폐기동의서 회신을 모두 확인하셨나요?\n\n' +
+      '처리대기로 이동하며 상태에 다음 두 가지가 기록됩니다.\n' +
+      '· 입금완료\n' +
+      '· 폐기동의서 회신완료'
+    )) return;
+
+    await dashApplyStageChange(c, '처리대기', {
+      note: dashGetActionNote(),
+      role: 'happycall',
+      actionLabel: '입금완료',
+      actionStatusOp: 'replace-deposit',
+      actionStatusValue: '입금완료',
+      actionStatusAlso: ['폐기동의서 회신완료'],
+      extraFields: {
+        depositConfirmedAt: serverTimestamp(),
+        discardAgreedAt: serverTimestamp()
+      }
+    });
   }
   // 유상 협의필요 → 확인요청 (내용 필수)
   async function dashActionASNegotiate(c) {
@@ -24828,6 +25700,12 @@
       });
       const label = count <= 1 ? actionStatusValue : (count + '회 ' + actionStatusValue);
       newActionStatus = [...others, label];
+    }
+
+    // (2026-09-02) 한 번의 동작으로 라벨을 둘 이상 남겨야 할 때
+    //   예: 폐기 입금완료 → ["입금완료", "폐기동의서 회신완료"]
+    if (Array.isArray(opts.actionStatusAlso) && opts.actionStatusAlso.length) {
+      newActionStatus = [...newActionStatus, ...opts.actionStatusAlso.filter(Boolean)];
     }
 
     // (v23) 일반 라벨(MERGE 대상 아닌) 중복 제거 — 수리완료/입금완료/해피콜완료/검수완료 등
