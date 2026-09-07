@@ -3588,14 +3588,10 @@
         <b>이 창은 닫으셔도 됩니다.</b>
       </div>
 
-      <button type="button" class="login-btn" id="hcAuthDoneBtn" onclick="doHcAuthContinueHere()">
-        원래 창이 안 보이면 → 이 창에서 계속하기
-      </button>
-
       <div class="login-error" id="hcAuthDoneError"></div>
 
       <div class="login-info">
-        💡 원래 창을 닫으셨다면 위 버튼을 눌러주세요.
+        💡 원래 창을 닫으셨다면, 처음 주소로 다시 접속해 로그인해 주세요.
       </div>
     </div>
 
@@ -18679,13 +18675,34 @@
   }
 
   // 탭 활성/비활성 감지
+  // ------------------------------------------------------------
+  // (2026-09-07 비용 수정) 슬립 대기시간 30초 → 60분
+  //
+  //   왜 바꿨나
+  //   Firestore 요금 구조는 다음과 같습니다.
+  //     · 구독을 그냥 열어두면        → 바뀐 문서만 과금 (가만히 있으면 0원)
+  //     · 구독을 끊었다가 다시 붙이면 → 결과 전체를 다시 읽음 (전액 과금)
+  //
+  //   30초로 두면, 직원이 ERP·엑셀·메신저를 잠깐 보고 돌아올 때마다
+  //   접수 1000건 + 마스터 자료 전부를 다시 읽습니다. 하루 수십 번이면
+  //   1인당 수만~수십만 건입니다.
+  //   실제 2026-09 청구: 읽기 3,771만 건 + 전송 127GiB (월 약 17만원)
+  //
+  //   → 잠깐 자리 비우는 경우에는 구독을 그대로 두고,
+  //     정말 오래 방치된 경우(60분)에만 정리합니다.
+  //     밤에는 22:00 자동 로그아웃이 따로 정리하므로 문제 없습니다.
+  //
+  //   ⚠️ 이 값을 다시 짧게 줄이면 요금이 그대로 튑니다. 줄이지 마세요.
+  // ------------------------------------------------------------
+  const SYNC_PAUSE_DELAY_MS = 60 * 60 * 1000;   // 60분
+
   document.addEventListener('visibilitychange', () => {
     if (document.hidden) {
-      // 즉시 중단 X — 잠시(30초) 다른 탭 보다가 돌아올 수 있으니 grace period
+      // 잠깐 다른 탭을 보는 경우에는 구독을 유지 (끊으면 재접속 시 전체 재읽기)
       if (window._pauseGraceTimer) clearTimeout(window._pauseGraceTimer);
       window._pauseGraceTimer = setTimeout(() => {
         if (document.hidden) pauseAllSyncs();
-      }, 30000); // 30초
+      }, SYNC_PAUSE_DELAY_MS);
     } else {
       // 다시 활성화
       if (window._pauseGraceTimer) {
@@ -28022,12 +28039,14 @@
   });
 
   // ==================== Firebase 연결 테스트 ====================
-  // 가장 가벼운 테스트: 비어있는 더미 컬렉션을 조회 시도
+  // (2026-09-07 수정) 예전에는 `_health_check`라는 빈 컬렉션을 조회했는데,
+  //   보안 규칙을 잠근 뒤로는 그 조회가 거부되어 로그인 화면에 빨간
+  //   "Firebase 연결 실패" 경고가 항상 떴습니다. (실제로는 정상)
+  //   → 로그인 전에도 읽을 수 있는 버전 문서로 점검 대상을 바꿉니다.
+  //     규칙에 넣어둔 `_health_check` 예외 3줄은 이제 지우셔도 됩니다.
   async function testFirebase() {
     try {
-      // 존재하지 않아도 되는 임의의 문서 조회 (에러 안 나는 경량 호출)
-      const q = query(collection(db, "_health_check"));
-      await getDocs(q);
+      await getDoc(doc(db, 'config', 'appVersion'));
       fbStatus.classList.remove('connecting');
       fbStatus.classList.add('connected');
       fbStatusText.textContent = 'Firebase 연결됨';
