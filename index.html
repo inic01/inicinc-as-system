@@ -3588,6 +3588,11 @@
         <b>이 창은 닫으셔도 됩니다.</b>
       </div>
 
+      <!-- (2026-09-08) 평소엔 숨겨두고, 1분이 지나도 원래 창이 못 받아가면 나타남 -->
+      <button type="button" class="login-btn" id="hcAuthDoneBtn" style="display:none;" onclick="doHcAuthContinueHere()">
+        원래 창이 로그인 안 되면 → 이 창에서 계속하기
+      </button>
+
       <div class="login-error" id="hcAuthDoneError"></div>
 
       <div class="login-info">
@@ -5699,23 +5704,47 @@
     if (_hcAuthWatchTimer) { clearInterval(_hcAuthWatchTimer); _hcAuthWatchTimer = null; }
   }
 
+  // (2026-09-08 수정) 이어받기 판정 방식 변경 — PC 시계에 의존하지 않도록
+  //
+  //   예전 방식: "로그인 시각이 기다리기 시작한 시각보다 뒤인가"를 비교했습니다.
+  //     → 직원 PC 시계가 서버와 몇 분만 어긋나도 이 비교가 영원히 참이 되지 않아,
+  //       메일 링크를 눌러 인증을 마쳐도 원래 창이 계속 대기 상태로 멈췄습니다.
+  //       (2026-09-08 해피콜 조장·구혜미 사원 로그인 불가 원인)
+  //
+  //   바꾼 방식: 기다리기 시작할 때의 로그인 상태를 기억해두고,
+  //     "그때와 달라졌는가"만 봅니다. 시계가 몇 분 틀려도 상관없습니다.
+  //     기존 로그인 흔적으로 그냥 통과되는 일도 없습니다(기준값과 같으면 무시).
   function hcAuthWatchStart(userId, email) {
     hcAuthWatchStop();
     _hcAuthWatchSince = Date.now();
     const want = String(email || '').toLowerCase();
+
+    // 기다리기 시작 시점의 상태를 기준값으로 기억
+    const before = (function() {
+      const u = fbAuth.currentUser;
+      if (!u) return { email: '', at: '' };
+      return {
+        email: u.email ? String(u.email).toLowerCase() : '',
+        at: (u.metadata && u.metadata.lastSignInTime) || ''
+      };
+    })();
+
     _hcAuthWatchTimer = setInterval(async () => {
       try {
         const u = fbAuth.currentUser;
         if (!u || !u.email) return;
         if (String(u.email).toLowerCase() !== want) return;
-        // 기다리기 시작한 뒤에 새로 로그인한 경우만 인정 (여유 5초)
-        const last = Date.parse((u.metadata && u.metadata.lastSignInTime) || 0);
-        if (!last || last < _hcAuthWatchSince - 5000) return;
+
+        const nowAt = (u.metadata && u.metadata.lastSignInTime) || '';
+        // 기준값과 완전히 같으면 = 아직 새 인증이 안 일어남
+        if (before.email === want && nowAt === before.at) return;
+
         hcAuthWatchStop();
         try { localStorage.removeItem('inic_emailauth_pending'); } catch(e) {}
         await hcAuthFinishInThisTab(u.email);
       } catch (e) { console.warn('[이메일 인증] 이어받기 확인 중 오류:', e); }
     }, 2000);
+
   }
 
   // 확인된 이메일로 신원을 찾아 이 창에서 로그인을 마무리한다
@@ -5894,6 +5923,12 @@
         });
         const done = document.getElementById('hcAuthDoneCard');
         if (done) done.style.display = '';
+        // (2026-09-08 안전장치) 원래 창이 1분 안에 못 받아가면 여기서 빠져나갈 버튼을 띄운다.
+        //   평소에는 안 보이므로 "창 두 개" 혼란은 그대로 없앤 상태입니다.
+        setTimeout(() => {
+          const b = document.getElementById('hcAuthDoneBtn');
+          if (b) b.style.display = '';
+        }, 60000);
         return;
       }
 
