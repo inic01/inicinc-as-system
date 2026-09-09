@@ -3345,7 +3345,7 @@
 </div>
 
 <!-- 5-3 대시보드 — 카드 상세 모달 -->
-<div id="dashCaseModal" onclick="if(event.target===this)dashCloseModal()">
+<div id="dashCaseModal" onclick="if(event.target===this && window._modalMouseDownOnOverlay)dashCloseModal()">
   <div class="dash-case-modal-content">
     <div class="dash-case-modal-header">
       <h3 id="dashModalTitle">접수 상세</h3>
@@ -3358,7 +3358,7 @@
 </div>
 
 <!-- 5-3 대시보드 — status 변경 모달 -->
-<div id="dashStatusModal" onclick="if(event.target===this)dashCloseStatusModal()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:210;align-items:center;justify-content:center;padding:20px;">
+<div id="dashStatusModal" onclick="if(event.target===this && window._modalMouseDownOnOverlay)dashCloseStatusModal()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:210;align-items:center;justify-content:center;padding:20px;">
   <div style="background:#fff;border-radius:14px;max-width:480px;width:100%;box-shadow:0 20px 50px rgba(0,0,0,0.25);overflow:hidden;">
     <div style="padding:18px 22px;border-bottom:1px solid #e5e7eb;display:flex;justify-content:space-between;align-items:center;">
       <h3 id="dashStatusModalTitle" style="margin:0;font-size:16px;font-weight:700;color:#111827;">상태 변경</h3>
@@ -3372,7 +3372,7 @@
 
 
 <!-- ======== 사진/영상 선택 모달 (3개 버튼: 사진촬영/영상촬영/파일선택) ======== -->
-<div id="captureChoiceModal" onclick="if(event.target===this)closeCaptureChoice()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:300;align-items:center;justify-content:center;padding:16px">
+<div id="captureChoiceModal" onclick="if(event.target===this && window._modalMouseDownOnOverlay)closeCaptureChoice()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:300;align-items:center;justify-content:center;padding:16px">
   <div style="background:#fff;border-radius:16px;padding:20px;max-width:380px;width:100%;box-shadow:0 20px 60px rgba(0,0,0,.3)">
     <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
       <span style="font-size:16px;font-weight:700;color:var(--text)">사진 / 영상 추가</span>
@@ -5185,9 +5185,239 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v84';
+  const APP_VERSION = 'v85';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
+
+  // ============================================================
+  // (v85) 글자 "끌어다 놓기" 차단 — 화면이 멈추는 현상의 원인
+  // ------------------------------------------------------------
+  //   증상: 상세창의 수리내용을 긁은 뒤, 그 선택된 글자 위를 다시 끌면
+  //         브라우저가 "글자를 옮기려는 것"으로 알아듣고 드래그앤드롭을 시작한다.
+  //         이 프로그램에는 글자를 받아줄 곳이 없어서 드래그가 끝나지 않고
+  //         브라우저가 마우스를 붙잡은 채로 있어 버튼·F12가 모두 안 먹는다.
+  //         (프로그램은 살아 있음 — 실제로 멈춘 게 아니다)
+  //   조치: 글자·일반 요소의 드래그 시작을 아예 막는다.
+  //         사진(IMG)·영상(VIDEO)·링크(A)는 그대로 둬서 밖으로 끌어내 저장 가능.
+  //   ⚠️ 이 프로그램에는 drop/dragover 처리가 한 곳도 없다(=드래그 기능 미사용).
+  //      그래서 막아도 잃는 기능이 없다. 되돌리려면 이 블록만 지우면 된다.
+  // ============================================================
+  document.addEventListener('dragstart', function (e) {
+    const t = e.target;
+    const tag = (t && t.tagName) ? String(t.tagName).toUpperCase() : '';
+    if (tag === 'IMG' || tag === 'VIDEO' || tag === 'A') return;  // 사진·영상·링크는 허용
+    e.preventDefault();
+  }, true);
+
+  // (v85) 위 차단만 하면 "두 번에 한 번씩 선택이 안 되는" 부작용이 생긴다.
+  //   이미 선택된 글자 위를 다시 누르면 브라우저가 "옮기려는 건가?" 하고 기다리느라
+  //   새 선택을 시작하지 않기 때문이다.
+  //   → 새로 긁기 시작할 때 이전 선택을 먼저 지워서 항상 깨끗하게 선택되게 한다.
+  //   (오른쪽 클릭 · Shift+클릭 · 더블/트리플 클릭 · 입력칸은 건드리지 않는다)
+  document.addEventListener('mousedown', function (e) {
+    try {
+      if (e.button !== 0) return;                 // 오른쪽 클릭(복사 메뉴)은 선택 유지
+      if (e.shiftKey) return;                     // Shift+클릭으로 범위 늘리기 유지
+      if (e.detail && e.detail > 1) return;       // 더블/트리플 클릭 선택 유지
+      const t = e.target;
+      const tag = (t && t.tagName) ? String(t.tagName).toUpperCase() : '';
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
+      if (t && t.isContentEditable) return;
+      const sel = window.getSelection && window.getSelection();
+      if (sel && !sel.isCollapsed) sel.removeAllRanges();
+    } catch (err) {}
+  }, true);
+
+  // ============================================================
+  // (v85) 모달: 드래그가 창 바깥에서 끝나도 창이 닫히지 않게
+  // ------------------------------------------------------------
+  //   글자를 긁다가 어두운 배경에서 마우스를 떼면 click 대상이 배경이 되어
+  //   창이 그냥 닫혀 버렸다. 관리자 창에는 이미 방어 코드가 있었지만
+  //   케이스 상세창·상태변경창 등에는 없었다.
+  //   → "누르기 시작한 곳도 배경일 때"만 닫는다.
+  // ============================================================
+  // ============================================================
+  // (v85) 접수 유실 방지 — "사진·영상은 NAS에 올라갔는데 카드가 없다"
+  // ------------------------------------------------------------
+  //   왜 생겼나
+  //     [접수하기] → ① 접수번호 발급 → ② NAS 업로드(수십 초) → ③ Firestore 저장
+  //     ③이 실패하면 파일만 남고 접수는 없다. 알림은 3초짜리 하나뿐이고,
+  //     접수번호는 "저장된 것 중 최대값+1"이라 곧 다른 사람이 같은 번호를
+  //     다시 받아간다. 그래서 번호에 구멍조차 안 남고 흔적이 0이 된다.
+  //     (2026-09-07 김의정 / 09-08 김도연 두 건 모두 이 경로)
+  //
+  //   조치
+  //     저장 실패 시 접수 내용 전체(이미 올라간 NAS 경로 포함)를 브라우저에
+  //     보관한다. 새로고침·재로그인·PC 재부팅을 해도 남는다.
+  //     로그인하면 빨간 배너로 알리고 [지금 저장] 한 번이면 복구된다.
+  //     영상은 이미 NAS에 있으므로 다시 올리지 않는다.
+  // ============================================================
+  const PENDING_SUBMIT_KEY = '_inicPendingCaseSubmits_v1';
+  const _PEND_TS = '__SERVER_TS__';
+  // serverTimestamp() 같은 값은 그대로 저장이 안 되므로 표시만 남겨두고 되살릴 때 복원
+  const _PEND_TS_FIELDS = ['createdAt','updatedAt','erpProcessedAt','statusUpdatedAt','erpPartsUploadedAt','statusUpdatedAtServer'];
+
+  window.pendingSubmitList = function () {
+    try { return JSON.parse(localStorage.getItem(PENDING_SUBMIT_KEY) || '[]'); }
+    catch (e) { return []; }
+  };
+  window.pendingSubmitAdd = function (caseId, caseData, errMsg) {
+    try {
+      const copy = {};
+      Object.keys(caseData || {}).forEach(k => {
+        copy[k] = _PEND_TS_FIELDS.indexOf(k) >= 0 ? _PEND_TS : caseData[k];
+      });
+      let json;
+      try { json = JSON.parse(JSON.stringify(copy, (k, v) => {
+        if (v && typeof v === 'object' && v._methodName) return _PEND_TS;      // FieldValue
+        if (v && typeof v === 'object' && typeof v.toDate === 'function') return _PEND_TS; // Timestamp
+        return v;
+      })); } catch (e) { json = null; }
+      if (!json) return false;
+      const list = window.pendingSubmitList().filter(x => x.caseId !== caseId);
+      list.push({
+        caseId,
+        savedAt: new Date().toISOString(),
+        by: (typeof NAS_USER !== 'undefined' && NAS_USER) ? NAS_USER : '',
+        customer: (json.customer && json.customer.name) || '',
+        phone: (json.customer && json.customer.phone) || '',
+        product: (json.product && json.product.name) || '',
+        attachmentCount: json.attachmentCount || 0,
+        error: String(errMsg || '').slice(0, 300),
+        data: json
+      });
+      localStorage.setItem(PENDING_SUBMIT_KEY, JSON.stringify(list));
+      return true;
+    } catch (e) { console.error('[접수보관] 실패:', e); return false; }
+  };
+  window.pendingSubmitRemove = function (caseId) {
+    try {
+      localStorage.setItem(PENDING_SUBMIT_KEY,
+        JSON.stringify(window.pendingSubmitList().filter(x => x.caseId !== caseId)));
+    } catch (e) {}
+  };
+  function _pendRevive(v) {
+    if (v === _PEND_TS) return serverTimestamp();
+    if (Array.isArray(v)) return v.map(_pendRevive);
+    if (v && typeof v === 'object') { const o = {}; Object.keys(v).forEach(k => { o[k] = _pendRevive(v[k]); }); return o; }
+    return v;
+  }
+
+  // 저장 재시도 (3회) — 일시적인 네트워크·인증 끊김을 대부분 여기서 흡수
+  window.saveCaseWithRetry = async function (caseId, caseData, tries) {
+    tries = tries || 3;
+    let lastErr = null;
+    for (let i = 1; i <= tries; i++) {
+      try {
+        // 저장 직전 출입증 갱신 (만료로 인한 거부 방지)
+        try {
+          const u = (typeof fbAuth !== 'undefined' && fbAuth) ? fbAuth.currentUser : null;
+          if (u && u.getIdToken) await u.getIdToken(i > 1);
+        } catch (e) {}
+        await setDoc(doc(db, 'cases', caseId), caseData);
+        return { ok: true };
+      } catch (e) {
+        lastErr = e;
+        console.warn('[접수 저장 실패] 시도 ' + i + '/' + tries, e && e.message);
+        if (i < tries) await new Promise(r => setTimeout(r, 1200 * i));
+      }
+    }
+    return { ok: false, error: lastErr };
+  };
+
+  // 실패했을 때 화면을 덮는 경고 (닫기 없음 — 절대 그냥 못 지나감)
+  window.pendingSubmitShowBlocker = function (caseId, errMsg) {
+    let el = document.getElementById('pendingSubmitBlocker');
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'pendingSubmitBlocker';
+      el.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px;';
+      document.body.appendChild(el);
+    }
+    el.innerHTML =
+      '<div style="background:#fff;border-radius:14px;max-width:520px;width:100%;padding:26px 28px;box-shadow:0 20px 50px rgba(0,0,0,.35);">' +
+        '<div style="font-size:40px;text-align:center;margin-bottom:8px;">🔴</div>' +
+        '<h2 style="margin:0 0 10px;font-size:19px;text-align:center;color:#b91c1c;">접수가 저장되지 않았습니다</h2>' +
+        '<div style="font-size:14px;line-height:1.7;color:#374151;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px 14px;margin-bottom:14px;">' +
+          '사진·영상은 NAS에 올라갔지만 <b>접수는 등록되지 않았습니다.</b><br>' +
+          '작성하신 내용은 안전하게 보관해 두었습니다.<br>' +
+          '<b>[지금 저장]</b>을 누르면 영상을 다시 올리지 않고 그대로 등록됩니다.' +
+        '</div>' +
+        '<div style="font-size:12px;color:#9ca3af;margin-bottom:16px;word-break:break-all;">접수번호 ' + escapeHtml(caseId) + ' · ' + escapeHtml(String(errMsg || '').slice(0, 160)) + '</div>' +
+        '<button type="button" id="pendingSubmitRetryBtn" style="width:100%;padding:14px;background:#dc2626;color:#fff;border:none;border-radius:10px;font-size:15px;font-weight:800;cursor:pointer;">💾 지금 저장</button>' +
+        '<div style="font-size:12px;color:#6b7280;text-align:center;margin-top:10px;">저장될 때까지 이 창은 닫히지 않습니다. 계속 안 되면 팀장에게 알려주세요.</div>' +
+      '</div>';
+    const btn = document.getElementById('pendingSubmitRetryBtn');
+    if (btn) btn.addEventListener('click', async () => {
+      btn.disabled = true; btn.textContent = '저장 중...';
+      const done = await window.pendingSubmitRetryOne(caseId);
+      if (done) {
+        el.remove();
+        if (typeof showToast === 'function') showToast('접수가 정상 등록되었습니다 (' + caseId + ')', 'success');
+      } else {
+        btn.disabled = false; btn.textContent = '💾 다시 저장';
+        if (typeof showToast === 'function') showToast('아직 저장되지 않았습니다. 인터넷 연결을 확인하고 다시 눌러주세요.', 'error');
+      }
+    });
+  };
+
+  window.pendingSubmitRetryOne = async function (caseId) {
+    const item = window.pendingSubmitList().find(x => x.caseId === caseId);
+    if (!item) return true;
+    const data = _pendRevive(item.data);
+    const r = await window.saveCaseWithRetry(caseId, data, 2);
+    if (r.ok) { window.pendingSubmitRemove(caseId); window.pendingSubmitRenderBanner(); return true; }
+    return false;
+  };
+
+  // 로그인 후 상단 배너 — 저장 안 된 접수가 남아 있으면 계속 보인다
+  window.pendingSubmitRenderBanner = function () {
+    const list = window.pendingSubmitList();
+    let el = document.getElementById('pendingSubmitBanner');
+    if (list.length === 0) { if (el) el.remove(); return; }
+    if (!el) {
+      el = document.createElement('div');
+      el.id = 'pendingSubmitBanner';
+      el.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:99998;background:#b91c1c;color:#fff;padding:10px 16px;font-size:13px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:12px;flex-wrap:wrap;box-shadow:0 2px 8px rgba(0,0,0,.2);';
+      document.body.appendChild(el);
+    }
+    const names = list.map(x => (x.customer || '?') + '(' + x.caseId + ')').join(', ');
+    el.innerHTML = '🔴 저장되지 않은 접수 ' + list.length + '건 — ' + escapeHtml(names) +
+      ' <button type="button" id="pendingSubmitBannerBtn" style="padding:6px 14px;background:#fff;color:#b91c1c;border:none;border-radius:6px;font-size:12px;font-weight:800;cursor:pointer;">지금 저장</button>';
+    const b = document.getElementById('pendingSubmitBannerBtn');
+    if (b) b.addEventListener('click', async () => {
+      b.disabled = true; b.textContent = '저장 중...';
+      let ok = 0, fail = 0;
+      for (const it of window.pendingSubmitList()) {
+        if (await window.pendingSubmitRetryOne(it.caseId)) ok++; else fail++;
+      }
+      window.pendingSubmitRenderBanner();
+      if (typeof showToast === 'function') {
+        showToast(fail === 0 ? ('저장 완료 — ' + ok + '건 등록되었습니다') : (ok + '건 저장 / ' + fail + '건 실패 — 잠시 후 다시 눌러주세요'), fail === 0 ? 'success' : 'error');
+      }
+    });
+  };
+
+  // 로그인 직후 + 5분마다 자동 확인
+  window.pendingSubmitStartWatch = function () {
+    try { window.pendingSubmitRenderBanner(); } catch (e) {}
+    if (window._pendingSubmitTimer) return;
+    window._pendingSubmitTimer = setInterval(() => {
+      try { if (window.pendingSubmitList().length > 0) window.pendingSubmitRenderBanner(); } catch (e) {}
+    }, 5 * 60 * 1000);
+  };
+  document.addEventListener('DOMContentLoaded', () => { try { window.pendingSubmitRenderBanner(); } catch (e) {} });
+
+  window._modalMouseDownOnOverlay = false;
+  document.addEventListener('mousedown', function (e) {
+    const t = e.target;
+    let onOverlay = false;
+    try {
+      if (t && t.id && /Modal$/.test(t.id)) onOverlay = true;
+      if (t && t.classList && t.classList.contains('admin-modal-overlay')) onOverlay = true;
+    } catch (err) {}
+    window._modalMouseDownOnOverlay = onOverlay;
+  }, true);
 
   // (step36) 최신 버전 보관 — onSnapshot/getDoc이 Firestore 최신 버전을 받을 때마다 갱신.
   //   접수 등록 직전 구버전 여부를 판단하는 데 사용한다.
@@ -10941,7 +11171,7 @@
 
     // 모달 출력
     const modalHtml = `
-      <div id="adminAuditDetailModal" class="admin-modal-overlay show" onclick="if(event.target===this) adminAuditCloseDetail()">
+      <div id="adminAuditDetailModal" class="admin-modal-overlay show" onclick="if(event.target===this && window._modalMouseDownOnOverlay) adminAuditCloseDetail()">
         <div class="admin-modal" style="max-width:760px; max-height:90vh; overflow:auto;">
           <div class="admin-modal-header">
             <h3>📜 변경 이력 상세</h3>
@@ -18562,9 +18792,14 @@
   let dashAllCases = [];
   let dashCurrentTypeFilter = 'all';
   let dashUnsubscribe = null;  // onSnapshot 해제 함수
+  // (v85) 엔지니어 구독에서 완료 건 제외 — 복합 인덱스가 없으면 예전 방식으로 자동 복귀
+  let dashEngFilterTried = false;
+  let dashEngFilterFallback = false;
 
   // Firestore 실시간 구독 시작
   function dashStartRealtimeSync() {
+    // (v85) 저장 안 된 접수가 남아 있으면 배너로 알린다
+    try { if (typeof window.pendingSubmitStartWatch === 'function') window.pendingSubmitStartWatch(); } catch (e) {}
     if (dashUnsubscribe) return;  // 이미 구독 중
     try {
       // (v18) 권한별 구독 범위 축소 — 비용 최적화
@@ -18592,12 +18827,28 @@
           window.dashAllCases = dashAllCases;
           return;
         }
-        q = query(
-          collection(db, 'cases'),
-          where('engineer', '==', engineerId),
-          orderBy('createdAt', 'desc'),
-          limit(500)
-        );
+        // (v85) 완료 건(erpPartsUploaded=true) 제외 → 진행 중만 불러옴
+        //   기존에는 엔지니어만 이 필터가 없어서, 완료 건이 limit 500을 잡아먹고
+        //   진행 중인 옛 접수건이 목록에서 "사라지는" 현상이 있었다.
+        //   복합 인덱스(engineer + erpPartsUploaded + createdAt)가 없으면
+        //   아래 onSnapshot 에러 처리에서 예전 방식으로 자동 복귀한다.
+        if (dashEngFilterFallback) {
+          q = query(
+            collection(db, 'cases'),
+            where('engineer', '==', engineerId),
+            orderBy('createdAt', 'desc'),
+            limit(500)
+          );
+        } else {
+          dashEngFilterTried = true;
+          q = query(
+            collection(db, 'cases'),
+            where('engineer', '==', engineerId),
+            where('erpPartsUploaded', '==', false),
+            orderBy('createdAt', 'desc'),
+            limit(500)
+          );
+        }
       } else if (role === 'grouplead' || role === 'teamlead') {
         // 조장/팀장 — 전체 구독 후 클라이언트에서 팀 필터링
         // (5번) 완료 건(erpPartsUploaded=true) 제외 → 진행 중만 불러옴
@@ -18629,6 +18880,16 @@
         }
       }, (err) => {
         console.error('Firestore 구독 오류:', err);
+        // (v85) 엔지니어 완료건 제외 쿼리에 복합 인덱스가 없으면 자동으로 예전 방식 복귀
+        const _msg = String((err && err.message) || err || '');
+        const _isIndexErr = (err && err.code === 'failed-precondition') || _msg.includes('index');
+        if (dashEngFilterTried && !dashEngFilterFallback && _isIndexErr) {
+          dashEngFilterFallback = true;
+          console.warn('[dashSync] 복합 인덱스 없음 → 기존 구독 방식으로 자동 전환합니다.', _msg);
+          try { if (dashUnsubscribe) dashUnsubscribe(); } catch (e2) {}
+          dashUnsubscribe = null;
+          try { dashStartRealtimeSync(); } catch (e3) { console.error(e3); }
+        }
       });
     } catch (e) {
       console.error('실시간 동기화 시작 실패:', e);
@@ -19869,10 +20130,16 @@
     }
 
     // ===== 수리내용 ERP 양식 자동 생성 (공통 함수 사용 — 7번 항목 자동 포함) =====
+    // (v85) 긁어서 복사할 필요가 없도록 [복사] 버튼을 붙인다.
+    //       글자를 긁는 동작 자체가 화면 멈춤의 원인이었다.
+    const _erpTextId = 'erpTreatText_' + String(c._docId || c.id || 'x').replace(/[^A-Za-z0-9_-]/g, '_');
     const erpFormHtml = `
       <div class="dash-case-section">
-        <h4>📝 수리내용 (ERP 양식)</h4>
-        <div style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px 14px;font-size:13px;line-height:1.8;font-family:'Pretendard', sans-serif;color:#111827;white-space:pre-line;">${escapeHtml(dashBuildErpTreatmentText(c))}</div>
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;margin-bottom:8px;">
+          <h4 style="margin:0;">📝 수리내용 (ERP 양식)</h4>
+          <button type="button" onclick="window.dashCopyErpText('${_erpTextId}', this)" style="padding:6px 12px;background:#0f766e;color:#fff;border:none;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;">📋 전체 복사</button>
+        </div>
+        <div id="${_erpTextId}" style="background:#f9fafb;border:1px solid #e5e7eb;border-radius:8px;padding:12px 14px;font-size:13px;line-height:1.8;font-family:'Pretendard', sans-serif;color:#111827;white-space:pre-line;">${escapeHtml(dashBuildErpTreatmentText(c))}</div>
       </div>
     `;
 
@@ -21712,7 +21979,7 @@
         </div>
 
         <!-- 새상품 ERP 전산 작업 모달 -->
-        <div id="erpNpWorkModal" onclick="if(event.target===this) window.dashErpNpWorkCloseModal()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:220;align-items:center;justify-content:center;padding:20px;">
+        <div id="erpNpWorkModal" onclick="if(event.target===this && window._modalMouseDownOnOverlay) window.dashErpNpWorkCloseModal()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:220;align-items:center;justify-content:center;padding:20px;">
           <div style="background:#fff;border-radius:14px;max-width:720px;width:100%;max-height:90vh;overflow:hidden;box-shadow:0 20px 50px rgba(0,0,0,0.25);display:flex;flex-direction:column;">
             <div id="erpNpWorkModalHeader" style="padding:18px 22px;border-bottom:1px solid #e5e7eb;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;">
               <h3 style="margin:0;font-size:17px;font-weight:700;color:#111827;">🆕 새상품 ERP 전산 입력</h3>
@@ -21784,7 +22051,7 @@
       </div>
 
       <!-- ERP 전산 작업 모달 (id 고정) -->
-      <div id="erpWorkModal" onclick="if(event.target===this) window.dashErpWorkCloseModal()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:220;align-items:center;justify-content:center;padding:20px;">
+      <div id="erpWorkModal" onclick="if(event.target===this && window._modalMouseDownOnOverlay) window.dashErpWorkCloseModal()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:220;align-items:center;justify-content:center;padding:20px;">
         <div style="background:#fff;border-radius:14px;max-width:720px;width:100%;max-height:90vh;overflow:hidden;box-shadow:0 20px 50px rgba(0,0,0,0.25);display:flex;flex-direction:column;">
           <div id="erpWorkModalHeader" style="padding:18px 22px;border-bottom:1px solid #e5e7eb;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;">
             <h3 style="margin:0;font-size:17px;font-weight:700;color:#111827;">📋 ERP 전산 입력</h3>
@@ -22814,7 +23081,7 @@
       </div>
 
       <!-- 새상품 처리 모달 -->
-      <div id="newProductModal" onclick="if(event.target===this) window.newProductCloseModal()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:230;align-items:center;justify-content:center;padding:20px;">
+      <div id="newProductModal" onclick="if(event.target===this && window._modalMouseDownOnOverlay) window.newProductCloseModal()" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:230;align-items:center;justify-content:center;padding:20px;">
         <div style="background:#fff;border-radius:14px;max-width:680px;width:100%;max-height:92vh;overflow:hidden;box-shadow:0 20px 50px rgba(0,0,0,0.25);display:flex;flex-direction:column;">
           <div id="newProductModalHeader" style="padding:16px 22px;border-bottom:1px solid #e5e7eb;display:flex;justify-content:space-between;align-items:center;flex-shrink:0;"></div>
           <div id="newProductModalBody" style="padding:18px 22px;overflow-y:auto;flex:1;"></div>
@@ -24796,18 +25063,37 @@
       const cutoff = new Date();
       cutoff.setMonth(cutoff.getMonth() - 3);
       const cutoffTs = Timestamp.fromDate(cutoff);
-      // erpPartsUploaded === true 이고 createdAt 최근 3개월
-      // 단일 필드 인덱스만 사용 (where + orderBy 다른 필드 조합은 복합 인덱스 필요)
-      const q = query(
-        collection(db, 'cases'),
-        where('erpPartsUploaded', '==', true),
-        orderBy('createdAt', 'desc'),
-        limit(2000)
-      );
+      // (v85) 엔지니어는 "본인이 담당한 최근 3개월 건"만 불러온다.
+      //   - 기존 인덱스(engineer + createdAt)를 그대로 쓰므로 새 인덱스 불필요
+      //   - 읽기량도 전체(2000건) 대비 크게 작다
+      const _role = window._currentUserRole || 'engineer';
+      const _engineerId = NAS_USER || '';
+      const _isEngineerView = (_role === 'engineer');
+      let q;
+      if (_isEngineerView) {
+        q = query(
+          collection(db, 'cases'),
+          where('engineer', '==', _engineerId),
+          where('createdAt', '>=', cutoffTs),
+          orderBy('createdAt', 'desc'),
+          limit(1000)
+        );
+      } else {
+        // erpPartsUploaded === true 이고 createdAt 최근 3개월
+        // 단일 필드 인덱스만 사용 (where + orderBy 다른 필드 조합은 복합 인덱스 필요)
+        q = query(
+          collection(db, 'cases'),
+          where('erpPartsUploaded', '==', true),
+          orderBy('createdAt', 'desc'),
+          limit(2000)
+        );
+      }
       const snap = await getDocs(q);
       const items = [];
       snap.forEach(d => {
         const data = d.data() || {};
+        // 엔지니어 쿼리는 진행 중 건도 같이 오므로, 완료 건만 남긴다
+        if (_isEngineerView && data.erpPartsUploaded !== true) return;
         items.push({ ...data, _docId: d.id });
       });
       window._completedListData = items;
@@ -25034,8 +25320,11 @@
     if (!c) return;
 
     // 권한 가드
+    // (v85) 엔지니어에게도 열되, "본인이 담당한 건"만 보이게 한다.
+    //   기존에는 엔지니어가 완료 건을 아예 볼 수 없어서
+    //   "접수한 폼이 사라졌다"는 오해가 반복 발생했다.
     const role = window._currentUserRole || 'engineer';
-    if (!['master', 'partlead', 'teamlead', 'grouplead'].includes(role)) {
+    if (!['master', 'partlead', 'teamlead', 'grouplead', 'engineer'].includes(role)) {
       c.innerHTML = `<div style="padding:40px;text-align:center;color:#6b7280;">
         <div style="font-size:48px;margin-bottom:12px;">🔒</div>
         <h3 style="margin:0 0 6px;">접근 권한이 없습니다</h3>
@@ -25092,7 +25381,13 @@
     // 대상 케이스 — 완료 접수내역 전용 데이터에서 필터링
     //   - AS: erpProcessed && erpPartsUploaded
     //   - 교환·반품: erpProcessed && newProductCompleted && erpPartsUploaded
+    // (v85) 엔지니어는 본인 담당 건만 (이중 안전장치 — 로딩 쿼리에서도 이미 제한됨)
+    const _isEngineerView = (role === 'engineer');
+    const _meLower = String(NAS_USER || '').toLowerCase();
     const allCompleted = (window._completedListData || []).filter(x => {
+      if (_isEngineerView) {
+        if (String(x.engineer || '').toLowerCase() !== _meLower) return false;
+      }
       if (x.stage !== '해피콜완료') return false;
       if (x.erpProcessed !== true) return false;
       if (x.erpPartsUploaded !== true) return false;
@@ -25222,6 +25517,7 @@
           <div>
             <h2 style="margin:0;font-size:22px;font-weight:600;">📦 완료 접수내역</h2>
             <div style="font-size:12px;color:#9ca3af;margin-top:2px;">전산입력 + 부품업로드 둘 다 완료된 케이스 (대시보드 해피콜완료에서 자동 제거됨)</div>
+            ${_isEngineerView ? `<div style="font-size:12px;color:#2563eb;margin-top:4px;font-weight:600;">👤 내가 담당한 건만 · 최근 3개월</div>` : ''}
           </div>
           ${(isMaster || ['partlead','teamlead','grouplead'].includes(role)) ? `
             <div style="display:flex;gap:8px;">
@@ -25276,6 +25572,7 @@
             <input type="date" id="completedCustomEnd" value="${st.customEnd || ''}" style="padding:9px 10px;border:1px solid #d1d5db;border-radius:8px;font-size:13px;">
           </span>
           <button type="button" id="completedSearchBtn" style="padding:9px 20px;background:#2563eb;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;">🔍 검색 / 새로고침</button>
+          <div style="flex-basis:100%;font-size:12px;color:#9ca3af;margin-top:-2px;">검색어를 입력하고 <b>Enter</b>를 누르세요 (또는 [검색] 클릭)</div>
         </div>
 
         ${!st.loaded ? `
@@ -25319,36 +25616,38 @@
       searchEl.addEventListener('compositionend', () => {
         _completedSearchComposing = false;
         window._completedListState.searchKw = searchEl.value;
-        if (window._completedListState.loaded) {
-          window._completedListState.page = 1;
-          const cursorPos = searchEl.selectionStart;
-          window.renderCompletedList();
-          const newEl = document.getElementById('completedSearchInput');
-          if (newEl) { newEl.focus(); try { newEl.setSelectionRange(cursorPos, cursorPos); } catch(e) {} }
-        }
       });
+      // (v85) 글자를 칠 때마다 화면 전체를 다시 그리면서 입력칸이 새로 만들어져
+      //       커서가 튕기고 한글 조합이 깨졌다(= "한 글자 쓰면 커서가 나감").
+      //       종류를 바꾸면 그때 화면이 새로 그려지면서 그동안 쌓인 검색어가
+      //       한꺼번에 적용돼 "AS로 바꾸면 검색된다"처럼 보였던 것도 같은 원인.
+      //       → 타이핑 중에는 값만 기억하고 다시 그리지 않는다. Enter 또는 [검색]에서 실행.
       searchEl.addEventListener('input', () => {
-        if (_completedSearchComposing) return; // 한글 조합 중엔 무시
         window._completedListState.searchKw = searchEl.value;
-        if (window._completedListState.loaded) {
-          window._completedListState.page = 1;
-          const cursorPos = searchEl.selectionStart;
-          window.renderCompletedList();
-          const newEl = document.getElementById('completedSearchInput');
-          if (newEl) { newEl.focus(); try { newEl.setSelectionRange(cursorPos, cursorPos); } catch(e) {} }
-        }
       });
       // Enter 키로도 검색 실행
       searchEl.addEventListener('keydown', (e) => {
         if (e.key === 'Enter') {
           e.preventDefault();
-          const btn = document.getElementById('completedSearchBtn');
-          if (btn) btn.click();
+          // (v85) 이미 불러온 자료 안에서 바로 걸러준다 — 다시 조회하지 않아 즉시 뜨고 비용도 0
+          const st2 = window._completedListState;
+          st2.searchKw = searchEl.value;
+          st2.page = 1;
+          if (st2.loaded) {
+            window.renderCompletedList();
+            const el2 = document.getElementById('completedSearchInput');
+            if (el2) { el2.focus(); try { el2.setSelectionRange(el2.value.length, el2.value.length); } catch (e2) {} }
+          } else {
+            const btn = document.getElementById('completedSearchBtn');
+            if (btn) btn.click();
+          }
         }
       });
     }
     const typeEl = document.getElementById('completedTypeFilter');
     if (typeEl) typeEl.addEventListener('change', () => {
+      const _s = document.getElementById('completedSearchInput');
+      if (_s) window._completedListState.searchKw = _s.value;   // (v85) 치던 검색어 유지
       window._completedListState.typeFilter = typeEl.value;
       window._completedListState.page = 1;
       if (window._completedListState.loaded) window.renderCompletedList();
@@ -27501,6 +27800,42 @@
 
   window.dashCloseModal = function() {
     document.getElementById('dashCaseModal').classList.remove('show');
+  };
+
+  // (v85) 수리내용(ERP 양식) 전체 복사 — 긁을 필요 없음
+  window.dashCopyErpText = async function(elId, btnEl) {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    const text = el.innerText || el.textContent || '';
+    if (!text.trim()) return;
+    let ok = true;
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (e) {
+      // 클립보드 권한이 없거나 http 환경(NAS)일 때 대체 경로
+      try {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.top = '-1000px';
+        ta.setAttribute('readonly', 'readonly');
+        document.body.appendChild(ta);
+        ta.select();
+        ta.setSelectionRange(0, text.length);
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      } catch (e2) { ok = false; }
+    }
+    if (btnEl) {
+      const orig = btnEl.innerHTML;
+      const origBg = btnEl.style.background;
+      btnEl.innerHTML = ok ? '✅ 복사됨' : '⚠️ 실패';
+      btnEl.style.background = ok ? '#16a34a' : '#dc2626';
+      setTimeout(() => { btnEl.innerHTML = orig; btnEl.style.background = origBg; }, 1400);
+    }
+    if (typeof showToast === 'function') {
+      showToast(ok ? '수리내용이 복사되었습니다 — ERP에 붙여넣으세요' : '복사 실패 — 글자를 직접 선택해 주세요', ok ? 'success' : 'error');
+    }
   };
 
   // ==================== 테스트 데이터 자동 생성 (마스터 전용) ====================
@@ -31449,7 +31784,18 @@
         }
       }
 
-      await setDoc(doc(db, "cases", caseId), caseData);
+      // (v85) 저장 실패해도 접수가 증발하지 않도록 — 3회 재시도 후 브라우저에 보관
+      const _saveRes = await window.saveCaseWithRetry(caseId, caseData, 3);
+      if (!_saveRes.ok) {
+        const _msg = (_saveRes.error && _saveRes.error.message) || String(_saveRes.error || '알 수 없는 오류');
+        window.pendingSubmitAdd(caseId, caseData, _msg);
+        window.pendingSubmitRenderBanner();
+        window.pendingSubmitShowBlocker(caseId, _msg);
+        formWrap.classList.remove('form-disabled');
+        submitBtn.textContent = '접수 등록하기';
+        submitBtn.disabled = false;
+        return;
+      }
 
       // (v15) 재고 차감 동기화 — partsUsed 만큼 inventory에서 -N (스냅샷 기반)
       if (typeof window.inventoryDeductFromCase === 'function') {
@@ -31483,6 +31829,14 @@
     } catch (err) {
       console.error('[접수 등록 실패]', err);
       showToast('등록 실패: ' + err.message, 'error');
+      // (v85) 파일은 이미 NAS에 올라간 뒤일 수 있다 → 접수 내용을 보관하고 크게 알린다
+      try {
+        if (typeof caseId !== 'undefined' && caseId && typeof caseData !== 'undefined' && caseData) {
+          window.pendingSubmitAdd(caseId, caseData, err && err.message);
+          window.pendingSubmitRenderBanner();
+          window.pendingSubmitShowBlocker(caseId, err && err.message);
+        }
+      } catch (e2) { console.error(e2); }
       // 폼 다시 활성화
       formWrap.classList.remove('form-disabled');
       submitBtn.textContent = '접수 등록하기';
@@ -33246,7 +33600,15 @@
         }]
       };
 
-      await setDoc(doc(db, "cases", caseId), caseData);
+      // (v85) 저장 실패해도 접수가 증발하지 않도록 — 3회 재시도 후 브라우저에 보관
+      const _saveRes2 = await window.saveCaseWithRetry(caseId, caseData, 3);
+      if (!_saveRes2.ok) {
+        const _msg2 = (_saveRes2.error && _saveRes2.error.message) || String(_saveRes2.error || '알 수 없는 오류');
+        window.pendingSubmitAdd(caseId, caseData, _msg2);
+        window.pendingSubmitRenderBanner();
+        window.pendingSubmitShowBlocker(caseId, _msg2);
+        return;
+      }
 
       // 성공 화면
       document.getElementById('erp_newCaseId').textContent = caseId;
