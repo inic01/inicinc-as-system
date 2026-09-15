@@ -5185,7 +5185,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v85';
+  const APP_VERSION = 'v86';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -21764,14 +21764,43 @@
       if (h && h.toStage === '해피콜완료' && h.fromStage) { prevStage = h.fromStage; break; }
     }
     if (!prevStage) prevStage = c.returnStage || '해피콜대기';
-    if (!confirm(`이 건을 완료 취소하고 이전 단계('${prevStage}')로 되돌릴까요?`)) return;
+
+    // ============================================================
+    // (v86) 되돌릴 때 ERP 표시도 같이 되돌린다 — 카드가 사라지던 원인
+    // ------------------------------------------------------------
+    //   예전에는 단계만 바꾸고 erpPartsUploaded / erpPartsReadyForUpload를
+    //   그대로 뒀다. 그래서
+    //     ① 되돌린 뒤에도 ERP 사용부품 업로드 목록에 계속 떠 있었고
+    //     ② 거기서 업로드 완료를 누르면 erpPartsUploaded=true가 되는데,
+    //        대시보드는 이 값이 false인 건만 불러오므로
+    //        진행 중인 건이 전 화면에서 사라졌다.
+    //   (2026-09-11 AS-20260911-097 김두민 건이 정확히 이 경로였다)
+    //
+    //   ※ erpProcessed(전산입력 완료)는 일부러 건드리지 않는다.
+    //      ERP에는 이미 입력해 둔 상태라 다시 입력하게 만들면 중복이 된다.
+    //      되돌린 뒤 내용이 바뀌었다면 'ERP 누락 복구' 화면에서 다시 잡힌다.
+    //      → 되돌릴 때 전산입력도 취소하려면 아래 주석 한 줄을 풀면 된다.
+    // ============================================================
+    const _erpWasDone = (c.erpProcessed === true);
+    const _msg = `이 건을 완료 취소하고 이전 단계('${prevStage}')로 되돌릴까요?`
+      + (_erpWasDone ? `\n\n⚠️ 이 건은 전산입력이 이미 끝난 상태입니다.\n되돌리면 사용부품 업로드 대기에서 빠집니다.\n내용이 바뀌면 ERP도 다시 확인해 주세요.` : '');
+    if (!confirm(_msg)) return;
+
     await dashApplyStageChange(c, prevStage, {
       note: (typeof dashGetActionNote === 'function' ? (dashGetActionNote() || '') : ''),
       newStatus: '',
       role: 'happycall',
       actionLabel: '완료취소(되돌리기)',
       actionStatusOp: 'append',
-      actionStatusValue: '완료취소'
+      actionStatusValue: '완료취소',
+      extraFields: {
+        erpPartsUploaded: false,        // ← 이게 true면 화면에서 사라진다
+        erpPartsReadyForUpload: false,  // ← 업로드 대기 목록에서 빼기
+        // erpProcessed: false,         // ← 전산입력까지 취소하려면 이 줄을 살릴 것
+        revertedFromComplete: true,
+        revertedAt: serverTimestamp(),
+        revertedBy: NAS_USER || '관리자'
+      }
     });
   };
 
