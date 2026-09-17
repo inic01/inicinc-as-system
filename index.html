@@ -4495,6 +4495,7 @@
     <div class="submit-area" style="display:flex;gap:10px;flex-wrap:wrap;">
       <button type="button" class="btn-submit" id="draftSaveBtn" onclick="window.asDraftSave()" style="flex:0 0 auto;background:#10b981;color:#fff;border:none;font-weight:700;">💾 임시저장</button>
       <button class="btn-submit" id="submitBtn" onclick="submitForm()" style="flex:1;">접수 등록하기</button>
+      <button type="button" class="btn-submit" id="printSubmitBtn" onclick="window.submitFormPrint()" hidden style="flex:1;background:#0f766e;color:#fff;border:none;font-weight:700;">🖨️ 수리내역 출력</button>
     </div>
 
   </div>
@@ -5185,7 +5186,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v87';
+  const APP_VERSION = 'v89';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -5366,7 +5367,14 @@
     if (!item) return true;
     const data = _pendRevive(item.data);
     const r = await window.saveCaseWithRetry(caseId, data, 2);
-    if (r.ok) { window.pendingSubmitRemove(caseId); window.pendingSubmitRenderBanner(); return true; }
+    if (r.ok) {
+      window.pendingSubmitRemove(caseId); window.pendingSubmitRenderBanner();
+      // (v89) [수리내역 출력]으로 접수하다 저장이 실패했던 건 → 저장되는 순간 내역서를 띄운다
+      if (data && data.repairReportPrinted === true && typeof window.dashPrintRepairReport === 'function') {
+        try { window.dashPrintRepairReport({ ...data, id: caseId, _docId: caseId }); } catch (e) { console.warn(e); }
+      }
+      return true;
+    }
     return false;
   };
 
@@ -20127,6 +20135,181 @@
     }
   };
 
+  // ============================================================
+  // (v89) 수리내역서 출력 — 확정 시안(A안)
+  //   · 보증문구·연락처 없음 / 문의 1800-8515 / 부품비 소계에 "(공임비 포함)"
+  //   · 무상: 부품 금액 0원 표기, 고객 청구 금액은 청구액(택배비 등만)
+  //   · 미리보기 창에서 증상·처리내용을 고칠 수 있음 — 인쇄용일 뿐 원본은 안 바뀜
+  //   · 사용처: AS 접수 화면의 [🖨️ 수리내역 출력] 버튼 (무상·방문AS 무상 — 출력 시 완료)
+  // ============================================================
+  window.dashCloseRepairReport = function() {
+    const ov = document.getElementById('repairReportOverlay');
+    if (ov) ov.remove();
+  };
+  window.dashPrintRepairReport = function(c) {
+    if (!c) return;
+    const esc = (typeof escapeHtml === 'function') ? escapeHtml : (x => String(x == null ? '' : x));
+    const won = n => (Number(n) || 0).toLocaleString('ko-KR') + '원';
+    const pad = n => String(n).padStart(2, '0');
+    const ymd = d => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    const fmtDate = v => {
+      if (!v) return '-';
+      if (v && typeof v.toDate === 'function') return ymd(v.toDate());
+      const t = String(v);
+      if (/^\d{8}$/.test(t)) return `${t.slice(0, 4)}-${t.slice(4, 6)}-${t.slice(6, 8)}`;
+      if (/^\d{4}-\d{2}-\d{2}/.test(t)) return t.slice(0, 10);
+      const d = new Date(t);
+      return isNaN(d) ? t : ymd(d);
+    };
+
+    const customer = c.customer || {};
+    const product = c.product || {};
+    const repairType = c.repairType || '';
+    const isFree = !repairType.includes('유상');
+    const engName = window.getDisplayName ? window.getDisplayName(c.engineer || '') : (c.engineer || '');
+
+    // 출고일 = 마지막 해피콜완료 시각, 없으면 오늘
+    let releaseDate = ymd(new Date());
+    const hist = Array.isArray(c.statusHistory) ? c.statusHistory : [];
+    for (let i = hist.length - 1; i >= 0; i--) {
+      const h = hist[i];
+      if (h && (h.toStage === '해피콜완료' || h.action === '해피콜완료') && h.changedAt) {
+        releaseDate = fmtDate(h.changedAt); break;
+      }
+    }
+
+    const defects = (c.defect && Array.isArray(c.defect.list)) ? c.defect.list : [];
+    const symptom = defects.map(d => d && d.name).filter(Boolean).join(', ') || '-';
+    const treatment = c.treatmentContent || '-';
+
+    const parts = Array.isArray(c.partsUsed) ? c.partsUsed.filter(p => p && typeof p === 'object') : [];
+    const partAmtRaw = p => (p.amount != null && !isNaN(p.amount)) ? Number(p.amount)
+      : (Number(p.price || p.unitPrice || 0) * Number(p.qty || p.quantity || 1));
+    // 무상은 부품 금액을 0원으로 표기 (9/17 결정)
+    const partAmt = p => isFree ? 0 : partAmtRaw(p);
+    const partsSum = parts.reduce((a, p) => a + partAmt(p), 0);
+    const delivery = parseInt(c.deliveryFee) || 0;
+    const visit = Number(c.visitFee) || 0;
+    const extra = Number(c.extraFee) || 0;
+    const total = (typeof window._caseExpectedAmount === 'function')
+      ? window._caseExpectedAmount(c)
+      : ((isFree ? 0 : partsSum + visit + extra) + delivery);
+
+    const partRows = parts.length
+      ? parts.map(p => `<tr><td>${esc(p.name || '-')}</td><td class="qty">${esc(p.qty || p.quantity || 1)}</td><td class="amt">${won(partAmt(p))}</td></tr>`).join('')
+      : `<tr><td colspan="3" style="color:#7b8a87;">교체 부품 없음</td></tr>`;
+    const feeRows =
+      (!isFree && visit ? `<tr><td>출장비</td><td class="qty"></td><td class="amt">${won(visit)}</td></tr>` : '') +
+      (!isFree && extra ? `<tr><td>추가비용</td><td class="qty"></td><td class="amt">${won(extra)}</td></tr>` : '') +
+      `<tr><td>택배비</td><td class="qty"></td><td class="amt">${won(delivery)}</td></tr>`;
+    const badge = isFree ? '<span class="badge">보증기간 내 무상</span>' : '<span class="badge paid">유상 수리</span>';
+
+    const html = `<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8">
+<title>수리내역서 ${esc(c.id || '')}</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+KR:wght@400;500;600;700&family=Noto+Sans+KR:wght@400;500;700&display=swap">
+<style>
+  :root{--ink:#16211f;--muted:#7b8a87;--line:#e2e8e6;--head:#f5f8f7;--accent:#0f766e;--accent-soft:#dcece9;--warn-bg:#fdf4e3;--warn-ink:#8a5a12;
+    --ui:'IBM Plex Sans KR','Malgun Gothic',sans-serif;--doc:'Noto Sans KR','Malgun Gothic',sans-serif;}
+  *{box-sizing:border-box;} html,body{margin:0;padding:0;background:#e9edec;}
+  .toolbar{position:sticky;top:0;z-index:5;background:#16211f;color:#fff;padding:10px 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-family:var(--ui);font-size:13px;}
+  .toolbar button{padding:8px 16px;border:none;border-radius:6px;font-weight:700;font-size:14px;cursor:pointer;background:#0f766e;color:#fff;font-family:inherit;}
+  .toolbar .close{background:#4b5563;}
+  .toolbar .tip{opacity:.8;}
+  .sheet{width:210mm;max-width:100%;margin:22px auto;background:#fff;color:var(--ink);font-family:var(--doc);font-size:14.5px;line-height:1.7;padding:16mm 24mm 20mm;box-shadow:0 2px 4px rgba(10,30,28,.10),0 12px 28px rgba(10,30,28,.14);}
+  .sheet-head{display:flex;justify-content:space-between;align-items:flex-start;gap:16px;border-bottom:2.5px solid var(--ink);padding-bottom:13px;}
+  .org{font-size:12.5px;font-weight:700;letter-spacing:.04em;color:var(--accent);}
+  .doctitle{font-size:27px;font-weight:700;letter-spacing:.38em;margin-top:5px;}
+  .docno{text-align:right;font-size:12.5px;color:var(--muted);line-height:1.9;}
+  .docno b{color:var(--ink);font-family:var(--ui);}
+  table{width:100%;border-collapse:collapse;}
+  .info{margin-top:18px;} .info th{width:90px;}
+  .info td.mid,.info th.mid{border-left:1px solid var(--line);}
+  .info th,.info td{padding:9px 12px;border-bottom:1px solid var(--line);font-size:13.5px;text-align:left;vertical-align:top;}
+  .info th{background:var(--head);color:var(--muted);font-weight:500;font-size:12px;white-space:nowrap;}
+  .sec{margin-top:22px;font-size:13.5px;font-weight:700;display:flex;align-items:center;gap:8px;}
+  .sec::before{content:"";width:3px;height:13px;background:var(--accent);border-radius:2px;}
+  .desc{margin-top:8px;border:1px solid var(--line);border-radius:6px;padding:12px 14px;}
+  .desc .row{display:flex;gap:12px;} .desc .row+.row{margin-top:7px;}
+  .desc .k{flex:0 0 48px;font-size:12px;color:var(--muted);font-weight:500;padding-top:1px;}
+  .desc .v{flex:1;white-space:pre-line;}
+  .edit{outline:2px dashed #f59e0b;outline-offset:2px;border-radius:3px;background:#fffbeb;}
+  .parts{margin-top:8px;font-variant-numeric:tabular-nums;}
+  .parts th{background:var(--head);padding:9px 12px;font-size:12px;font-weight:600;color:var(--muted);border-bottom:1.5px solid var(--line);text-align:left;}
+  .parts td{padding:9px 12px;border-bottom:1px solid var(--line);font-size:13.5px;}
+  .parts .qty,.parts th.qty{text-align:center;width:72px;}
+  .parts .amt,.parts th.amt{text-align:right;width:124px;}
+  .parts tr.sum td{font-weight:700;}
+  .parts .hint{font-weight:400;color:var(--muted);font-size:12px;}
+  .total{margin-top:12px;border-top:2px solid var(--ink);padding-top:12px;display:flex;justify-content:space-between;align-items:center;gap:14px;}
+  .total .lab{font-size:15px;font-weight:700;}
+  .total .val{font-size:23px;font-weight:700;font-family:var(--ui);font-variant-numeric:tabular-nums;}
+  .total .right{display:flex;align-items:center;gap:12px;}
+  .badge{display:inline-block;border-radius:4px;padding:3px 10px;font-size:11.5px;font-weight:700;background:var(--accent-soft);color:var(--accent);}
+  .badge.paid{background:var(--warn-bg);color:var(--warn-ink);}
+  .contact{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;font-size:12px;color:var(--muted);}
+  .contact .dot{opacity:.5;} .contact b{color:var(--ink);}
+  @page{size:A4;margin:16mm 20mm;}
+  @media print{
+    html,body{background:#fff;} .toolbar{display:none;}
+    .sheet{width:auto;max-width:none;margin:0;padding:0;box-shadow:none;}
+    .edit{outline:none;background:none;}
+  }
+</style></head><body>
+<div class="toolbar">
+  <button type="button" onclick="window.print()">🖨️ 인쇄</button>
+  <button type="button" class="close" onclick="parent.dashCloseRepairReport()">닫기</button>
+  <span class="tip">노란 점선 칸(증상·처리)은 눌러서 고칠 수 있습니다. 인쇄용으로만 바뀌고 접수 내용은 그대로입니다.</span>
+</div>
+<section class="sheet">
+  <div class="sheet-head">
+    <div><div class="org">아이닉 INIC</div><div class="doctitle">수리내역서</div></div>
+    <div class="docno">접수번호 <b>${esc(c.id || c._docId || '-')}</b><br>발행일 <b>${ymd(new Date())}</b></div>
+  </div>
+  <table class="info"><tbody>
+    <tr><th>고객명</th><td><b>${esc(customer.name || '-')}</b> 님</td><th class="mid">담당</th><td>${esc(engName || '-')}</td></tr>
+    <tr><th>제품명</th><td>${esc(product.name || '-')}</td><th class="mid">시리얼</th><td>${esc(product.serial || '-')}</td></tr>
+    <tr><th>입고일</th><td>${esc(fmtDate(c.intakeDate || c.createdDate))}</td><th class="mid">출고일</th><td>${esc(releaseDate)}</td></tr>
+  </tbody></table>
+  <div class="sec">증상 및 처리내용</div>
+  <div class="desc">
+    <div class="row"><div class="k">증상</div><div class="v edit" contenteditable="true">${esc(symptom)}</div></div>
+    <div class="row"><div class="k">처리</div><div class="v edit" contenteditable="true">${esc(treatment)}</div></div>
+  </div>
+  <div class="sec">교체 부품 및 비용</div>
+  <table class="parts">
+    <thead><tr><th>부품명</th><th class="qty">수량</th><th class="amt">금액</th></tr></thead>
+    <tbody>
+      ${partRows}
+      <tr class="sum"><td>부품비 소계 <span class="hint">(공임비 포함)</span></td><td class="qty"></td><td class="amt">${won(partsSum)}</td></tr>
+      ${feeRows}
+    </tbody>
+  </table>
+  <div class="total">
+    <div class="lab">고객 청구 금액</div>
+    <div class="right">${badge}<span class="val">${won(total)}</span></div>
+  </div>
+  <div class="contact">
+    <span>문의 · 아이닉 고객센터 <b>1800-8515</b> (평일 10:00~17:00)</span>
+    <span class="dot">·</span>
+    <span>아이닉 고객관리팀</span>
+  </div>
+</section>
+</body></html>`;
+
+    // 새 창 대신 화면 위에 띄운다 — 팝업 차단과 무관하게 항상 보이도록
+    let ov = document.getElementById('repairReportOverlay');
+    if (ov) ov.remove();
+    ov = document.createElement('div');
+    ov.id = 'repairReportOverlay';
+    ov.style.cssText = 'position:fixed;inset:0;z-index:99990;background:#fff;display:flex;flex-direction:column;';
+    const fr = document.createElement('iframe');
+    fr.style.cssText = 'flex:1;border:0;width:100%;';
+    fr.title = '수리내역서';
+    ov.appendChild(fr);
+    document.body.appendChild(ov);
+    fr.srcdoc = html;
+  };
+
   window.dashOpenModal = function(docId) {
     // 폴백 검색: _docId 우선, 없으면 id 필드로도 찾기 (구버전 데이터 호환)
     // (v13) dashAllCases는 활성 케이스만 → 완료 접수내역 데이터도 함께 검색
@@ -21901,7 +22084,7 @@
     // ============================================================
     const _erpWasDone = (c.erpProcessed === true);
     const _msg = `이 건을 완료 취소하고 이전 단계('${prevStage}')로 되돌릴까요?`
-      + (_erpWasDone ? `\n\n⚠️ 이 건은 전산입력이 이미 끝난 상태입니다.\n되돌리면 사용부품 업로드 대기에서 빠집니다.\n내용이 바뀌면 ERP도 다시 확인해 주세요.` : '');
+      + (_erpWasDone ? `\n\n⚠️ 이 건은 전산입력이 이미 끝난 상태입니다.\n되돌리면 [전산입력 완료] 표시도 취소되어 다시 전산입력 대상이 됩니다.\nERP에 이미 입력한 내용은 중복되지 않게 확인해 주세요.` : '');
     if (!confirm(_msg)) return;
 
     await dashApplyStageChange(c, prevStage, {
@@ -21914,7 +22097,8 @@
       extraFields: {
         erpPartsUploaded: false,        // ← 이게 true면 화면에서 사라진다
         erpPartsReadyForUpload: false,  // ← 업로드 대기 목록에서 빼기
-        // erpProcessed: false,         // ← 전산입력까지 취소하려면 이 줄을 살릴 것
+        erpProcessed: false,            // (v88) 전산입력 완료도 같이 취소 — 조유림 조장 결정(9/16)
+        revertedErpWasDone: _erpWasDone, // 되돌리기 전에 전산입력이 끝나 있었는지 기록
         revertedFromComplete: true,
         revertedAt: serverTimestamp(),
         revertedBy: NAS_USER || '관리자'
@@ -29218,6 +29402,15 @@
     if (alt) alt.style.display = (isBunyu && isFree) ? '' : 'none';
   };
 
+  // (v89) 수리유형이 바뀔 때마다 [수리내역 출력] 버튼 표시 갱신
+  setTimeout(() => {
+    const _orig = window.selectRepairType;
+    if (typeof _orig === 'function' && !_orig._printWrapped) {
+      const w = function(v) { const r = _orig.apply(this, arguments); try { window.updatePrintSubmitBtn(); } catch (e) {} return r; };
+      w._printWrapped = true;
+      window.selectRepairType = w;
+    }
+  }, 0);
   window.selectRepairType = function(value) {
     const currentVal = document.getElementById('repairType').value;
     const isToggleOff = (currentVal === value); // 같은 버튼 다시 → 해제
@@ -31539,6 +31732,68 @@
   };
 
   // ==================== 폼 제출 ====================
+  // (v89) [🖨️ 수리내역 출력] — 무상·방문AS 무상 전용
+  //   팝업 차단을 피하려고 클릭 순간 빈 창을 먼저 연 뒤, 저장이 끝나면 그 창에 내역서를 그린다.
+  //   저장이 실패하거나 입력이 빠져 등록이 안 되면 창을 닫는다.
+  // 확인창 (굵은 글씨를 쓰려고 브라우저 기본 confirm 대신 직접 그림)
+  function _printConfirm() {
+    return new Promise(resolve => {
+      const ov = document.createElement('div');
+      ov.style.cssText = 'position:fixed;inset:0;z-index:99980;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;padding:16px;';
+      ov.innerHTML = '<div style="background:#fff;border-radius:14px;max-width:440px;width:100%;padding:22px 22px 18px;box-shadow:0 20px 50px rgba(0,0,0,.3);">'
+        + '<p style="margin:0 0 18px;font-size:14.5px;line-height:1.75;color:#111827;">수리내역서를 출력 시 <b style="font-size:16.5px;font-weight:800;">완료</b>로 처리됩니다.<br><br>'
+        + '만약 고객에게 안내가 필요한 건이면 <b style="font-size:16.5px;font-weight:800;">취소</b> 후 <b style="font-size:16.5px;font-weight:800;">접수 등록하기</b>로 접수해주세요.</p>'
+        + '<div style="display:flex;gap:8px;justify-content:flex-end;">'
+        + '<button type="button" data-a="no" style="padding:10px 18px;border-radius:8px;border:1px solid #e5e7eb;background:#fff;font-weight:700;font-size:14px;cursor:pointer;font-family:inherit;">취소</button>'
+        + '<button type="button" data-a="ok" style="padding:10px 18px;border-radius:8px;border:none;background:#0f766e;color:#fff;font-weight:700;font-size:14px;cursor:pointer;font-family:inherit;">수리내역 출력</button>'
+        + '</div></div>';
+      ov.addEventListener('click', e => {
+        const a = e.target && e.target.getAttribute && e.target.getAttribute('data-a');
+        if (a) { ov.remove(); resolve(a === 'ok'); }
+      });
+      document.body.appendChild(ov);
+    });
+  }
+
+  window.submitFormPrint = async function() {
+    if (window._submitPrintMode) return; // 이미 진행 중
+    const rt = (document.getElementById('repairType') || {}).value || '';
+    if (!(rt === '무상' || rt === '방문AS 무상')) {
+      showToast('수리내역 출력은 무상·방문AS 무상 건만 가능합니다', 'error');
+      return;
+    }
+    if (!(await _printConfirm())) return;
+    const pbtn = document.getElementById('printSubmitBtn');
+    if (pbtn) pbtn.disabled = true;
+    window._submitPrintMode = true;
+    window._lastPrintSubmit = null;
+    try {
+      await window.submitForm();
+    } finally {
+      window._submitPrintMode = false;
+      if (pbtn) pbtn.disabled = false;
+    }
+    const done = window._lastPrintSubmit;
+    window._lastPrintSubmit = null;
+    if (done) window.dashPrintRepairReport(done); // 저장 성공한 경우에만 내역서 표시
+  };
+
+  // 출력 버튼 표시: [접수 등록하기]가 보이고, 수리유형이 무상 계열일 때만
+  window.updatePrintSubmitBtn = function() {
+    const pbtn = document.getElementById('printSubmitBtn');
+    const sbtn = document.getElementById('submitBtn');
+    if (!pbtn || !sbtn) return;
+    const rt = (document.getElementById('repairType') || {}).value || '';
+    const free = (rt === '무상' || rt === '방문AS 무상');
+    pbtn.hidden = !(free && sbtn.style.display !== 'none' && !window._editModeCaseId);
+  };
+  try {
+    const _sb = document.getElementById('submitBtn');
+    if (_sb) new MutationObserver(() => window.updatePrintSubmitBtn()).observe(_sb, { attributes: true, attributeFilter: ['style'] });
+    const _rtEl = document.getElementById('repairType');
+    if (_rtEl) new MutationObserver(() => window.updatePrintSubmitBtn()).observe(_rtEl, { attributes: true, attributeFilter: ['value'] });
+  } catch (e) {}
+
   window.submitForm = async function() {
     // (step36) 구버전이면 등록 막고 모달 표시 — 작성 내용은 그대로 유지됨.
     //   직원은 임시저장 후 새로고침하거나, 새로고침 후 다시 등록.
@@ -31775,6 +32030,13 @@
         actionStatus = []; // 해피콜완료는 라벨 비움
       }
 
+      // (v89) [🖨️ 수리내역 출력] — 무상 건은 수리내역서를 출력하고 해피콜 없이 바로 완료
+      const _printComplete = (window._submitPrintMode === true) && !isPaidType && repairType !== '확인요청';
+      if (_printComplete && !isDirectReceive) {
+        stage = '해피콜완료';
+        actionStatus = [];
+      }
+
       // Firestore에 저장
       const caseData = {
         id: caseId,
@@ -31931,6 +32193,29 @@
         }
       }
 
+      if (_printComplete) {
+        caseData.repairReportPrinted = true;
+        caseData.repairReportPrintedAt = serverTimestamp();
+        caseData.repairReportPrintedBy = NAS_USER || '엔지니어';
+        caseData.completionReason = '수리내역서 출력';
+        if (!isDirectReceive) {
+          caseData.erpReadyForInput = true; // 완료 건 → ERP 전산작업 목록에 노출
+          caseData.statusUpdatedAt = serverTimestamp();
+          caseData.statusUpdatedBy = NAS_USER || '엔지니어';
+          caseData.statusHistory = [{
+            changedAt: new Date().toISOString(),
+            changedBy: NAS_USER || '엔지니어',
+            role: 'engineer',
+            fromStage: '',
+            toStage: '해피콜완료',
+            fromStatus: '',
+            toStatus: '',
+            note: '',
+            action: '접수 (수리내역서 출력 — 해피콜 생략, 자동 완료)'
+          }];
+        }
+      }
+
       // (v85) 저장 실패해도 접수가 증발하지 않도록 — 3회 재시도 후 브라우저에 보관
       const _saveRes = await window.saveCaseWithRetry(caseId, caseData, 3);
       if (!_saveRes.ok) {
@@ -31952,6 +32237,8 @@
         } catch (e) { console.warn('AS 접수 - 재고 차감 실패:', e); }
       }
 
+      if (_printComplete) window._lastPrintSubmit = { ...caseData, id: caseId, _docId: caseId };
+
       // 성공 화면 전환
       newCaseIdEl.textContent = caseId;
       formWrap.style.display = 'none';
@@ -31961,7 +32248,9 @@
       if (window.showUpdateBannerIfOutdated) window.showUpdateBannerIfOutdated('saved');
 
       // 자동 ERP완료 케이스는 메시지에 표시
-      if (erpProcessed) {
+      if (_printComplete) {
+        showToast('접수 완료 — 수리내역서 출력 → 완료', 'success');
+      } else if (erpProcessed) {
         showToast('접수 완료 (직접수령 → 자동 해피콜완료)', 'success');
       } else {
         showToast('접수가 등록되었습니다', 'success');
