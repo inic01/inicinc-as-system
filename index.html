@@ -5186,7 +5186,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v89';
+  const APP_VERSION = 'v91';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -12364,6 +12364,7 @@
               <th style="width: 130px;">카테고리</th>
               <th style="width: 160px;">제품</th>
               <th>불량명</th>
+              <th style="width: 110px; text-align: center;">공임 등급</th>
               <th style="width: 70px; text-align: center;">순서</th>
               <th style="width: 80px;">상태</th>
               <th style="width: 150px;">최근 수정</th>
@@ -12371,7 +12372,7 @@
             </tr>
           </thead>
           <tbody id="adminDefectTbody">
-            <tr><td colspan="7" class="admin-loading">데이터 불러오는 중...</td></tr>
+            <tr><td colspan="8" class="admin-loading">데이터 불러오는 중...</td></tr>
           </tbody>
         </table>
       </div>
@@ -12479,6 +12480,14 @@
   }
 
   // 테이블 렌더링
+  // (v91) 공임 등급 배지 — A: 30분 이내 / B: 30~60분
+  window.LABOR_GRADE_LABEL = { A: 'A · 30분 이내', B: 'B · 30~60분' };
+  window.laborGradeBadge = function(g) {
+    if (g === 'A') return '<span style="background:#dcece9;color:#0f766e;padding:2px 9px;border-radius:99px;font-size:11.5px;font-weight:800;">A</span>';
+    if (g === 'B') return '<span style="background:#fdf4e3;color:#8a5a12;padding:2px 9px;border-radius:99px;font-size:11.5px;font-weight:800;">B</span>';
+    return '<span style="background:#f3f4f6;color:#9ca3af;padding:2px 9px;border-radius:99px;font-size:11.5px;font-weight:700;">없음</span>';
+  };
+
   window.adminRenderDefectTable = function() {
     const tbody = document.getElementById('adminDefectTbody');
     if (!tbody) return;
@@ -12522,7 +12531,7 @@
     });
 
     if (items.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="7" class="admin-table-empty">표시할 불량명이 없습니다. [+ 신규 등록]으로 추가하세요.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="8" class="admin-table-empty">표시할 불량명이 없습니다. [+ 신규 등록]으로 추가하세요.</td></tr>`;
       return;
     }
 
@@ -12540,6 +12549,7 @@
           <td>${categoryBadge}</td>
           <td>${isCommon ? '<span style="color:#9ca3af;font-size:12px;">(공통)</span>' : escapeHtml(d.product || '-')}</td>
           <td><b>${escapeHtml(d.name || '-')}</b></td>
+          <td style="text-align:center;">${window.laborGradeBadge(d.laborGrade)}</td>
           <td style="text-align:center;font-variant-numeric: tabular-nums;">${orderVal}</td>
           <td><span class="admin-badge ${isActive ? 'active' : 'inactive'}">${isActive ? '활성' : '비활성'}</span></td>
           <td style="font-size:11px;color:#6b7280;">${updatedAt}<br>${escapeHtml(updatedBy)}</td>
@@ -12597,6 +12607,16 @@
         <label>불량명<span class="required">*</span></label>
         <input type="text" id="adminFormDefectName" placeholder="예: 물 안 나옴" value="${defect ? escapeHtml(defect.name) : ''}" autocomplete="off">
         <div class="field-hint">같은 카테고리·제품 안에서 중복되지 않게 입력하세요.</div>
+      </div>
+
+      <div class="admin-form-field">
+        <label>공임 등급</label>
+        <select id="adminFormDefectLaborGrade">
+          <option value="A" ${defect && defect.laborGrade === 'A' ? 'selected' : ''}>A · 30분 이내</option>
+          <option value="B" ${defect && defect.laborGrade === 'B' ? 'selected' : ''}>B · 30~60분</option>
+          <option value="없음" ${!defect || !(defect.laborGrade === 'A' || defect.laborGrade === 'B') ? 'selected' : ''}>없음 (공임비 안 붙음)</option>
+        </select>
+        <div class="field-hint">접수 건의 공임비는 <b>첫 번째 불량명</b>의 등급으로 정해집니다. 금액은 부품 관리의 "공임비 A/B" 단가를 씁니다.</div>
       </div>
 
       <div class="admin-form-field">
@@ -12659,6 +12679,8 @@
     const category = document.getElementById('adminFormDefectCategory')?.value?.trim();
     const product = document.getElementById('adminFormDefectProduct')?.value?.trim();
     const name = document.getElementById('adminFormDefectName')?.value?.trim();
+    const laborGradeRaw = document.getElementById('adminFormDefectLaborGrade')?.value || '';
+    const laborGrade = (laborGradeRaw === 'A' || laborGradeRaw === 'B') ? laborGradeRaw : '없음';
     const orderRaw = document.getElementById('adminFormDefectOrder')?.value?.trim();
     const order = orderRaw ? Number(orderRaw) : 100;
 
@@ -12707,14 +12729,14 @@
     if (docId) {
       const before = window._adminDefects.find(d => d.id === docId);
       await updateDoc(doc(db, 'defects', docId), {
-        category, product: finalProduct, name, order,
+        category, product: finalProduct, name, order, laborGrade,
         updatedAt: now, updatedBy: user
       });
-      await adminLogHistory('defects', docId, 'update', before, { category, product: finalProduct, name, order });
+      await adminLogHistory('defects', docId, 'update', before, { category, product: finalProduct, name, order, laborGrade });
       showToast(`"${name}" 수정 완료`, 'success');
     } else {
       const newDoc = await addDoc(collection(db, 'defects'), {
-        category, product: finalProduct, name, order,
+        category, product: finalProduct, name, order, laborGrade,
         active: true,
         createdAt: now, updatedAt: now,
         createdBy: user, updatedBy: user
@@ -16803,11 +16825,20 @@
         { key: 'category', label: '카테고리' },
         { key: 'product',  label: '제품' },
         { key: 'name',     label: '불량명' },
+        // (v91) 공임 등급 — A: 30분 이내 / B: 30~60분 / 빈칸: 공임비 없음
+        { key: 'laborGrade', label: '공임등급(A/B/없음)',
+          // A: 30분 이내 / B: 30~60분 / 없음: 공임비 안 붙음 (빈칸도 '없음'으로 본다)
+          parse: v => { const t = String(v == null ? '' : v).trim().toUpperCase(); return (t === 'A' || t === 'B') ? t : '없음'; },
+          format: v => (v === 'A' || v === 'B') ? v : '없음' },
         { key: 'order',    label: '표시순서', parse: v => Number(v) || 0, format: v => v ?? '' },
         { key: 'active',   label: '상태(활성=Y)', parse: v => String(v).toUpperCase() !== 'N', format: v => v === false ? 'N' : 'Y' }
       ],
       naturalKey: ['category', 'product', 'name'],
-      validate: (row) => (row.category && row.name) ? null : '카테고리와 불량명은 필수'
+      validate: (row) => {
+        if (!row.category || !row.name) return '카테고리와 불량명은 필수';
+        if (!['A', 'B', '없음'].includes(row.laborGrade)) return '공임등급은 A · B · 없음 중 하나';
+        return null;
+      }
     },
     parts: {
       collection: 'parts',
@@ -20248,10 +20279,12 @@
   .badge.paid{background:var(--warn-bg);color:var(--warn-ink);}
   .contact{margin-top:20px;padding-top:12px;border-top:1px solid var(--line);display:flex;gap:10px;align-items:baseline;flex-wrap:wrap;font-size:12px;color:var(--muted);}
   .contact .dot{opacity:.5;} .contact b{color:var(--ink);}
-  @page{size:A4;margin:16mm 20mm;}
+  /* (v90) 여백 0 — 크롬이 넣는 머리글(제목·날짜)·바닥글(사이트 주소·쪽번호) 자리를 없앤다.
+     대신 종이 여백은 .sheet가 직접 갖는다. */
+  @page{size:A4;margin:0;}
   @media print{
     html,body{background:#fff;} .toolbar{display:none;}
-    .sheet{width:auto;max-width:none;margin:0;padding:0;box-shadow:none;}
+    .sheet{width:auto;max-width:none;margin:0;padding:16mm 20mm;box-shadow:none;}
     .edit{outline:none;background:none;}
   }
 </style></head><body>
@@ -25012,7 +25045,7 @@
             <h3 style="margin:0 0 6px;color:#6b7280;">업로드 대기 부품·포장재가 없습니다</h3>
             <p style="margin:0;font-size:13px;">AS 케이스를 ERP 전산 작업에서 [전산입력 완료]하면 여기에 표시됩니다.</p>
           </div>
-        ` : dashErpPartsRenderTable(targets)}
+        ` : (dashErpPartsPagerHtml(targets, 'top') + dashErpPartsRenderTable(targets) + dashErpPartsPagerHtml(targets, 'bottom'))}
       </div>
     `;
 
@@ -25047,6 +25080,17 @@
     document.getElementById('erpPartsDownloadBtn').addEventListener('click', () => dashErpPartsDownload(targets));
     document.getElementById('erpPartsCompleteBtn').addEventListener('click', () => dashErpPartsComplete(targets));
 
+    // (v90) 페이지 버튼
+    document.querySelectorAll('[data-erp-parts-page]').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const p = parseInt(btn.dataset.erpPartsPage);
+        if (!p || btn.disabled) return;
+        window._erpPartsPage = p;
+        rerender();
+        try { c.scrollIntoView({ behavior: 'smooth', block: 'start' }); } catch (e) {}
+      });
+    });
+
     // 행 체크박스 + 케이스 헤더 체크박스 이벤트
     document.querySelectorAll('[data-erp-part-row]').forEach(cb => {
       cb.addEventListener('change', (e) => {
@@ -25071,7 +25115,43 @@
     });
   };
 
-  // 테이블 본체 렌더 — 케이스별 그룹 + 행별 체크박스
+  // (v90) 목록이 길면 화면을 케이스 20건씩 끊어서 보여준다 (다운로드·선택은 전체 그대로)
+  const ERP_PARTS_PER_PAGE = 20;
+  window._erpPartsPage = window._erpPartsPage || 1;
+  function dashErpPartsPageCount(targets) {
+    return Math.max(1, Math.ceil(targets.length / ERP_PARTS_PER_PAGE));
+  }
+  function dashErpPartsCurrentPage(targets) {
+    const max = dashErpPartsPageCount(targets);
+    let p = parseInt(window._erpPartsPage) || 1;
+    if (p < 1) p = 1;
+    if (p > max) p = max;
+    window._erpPartsPage = p;
+    return p;
+  }
+  function dashErpPartsPagerHtml(targets, where) {
+    const total = targets.length;
+    if (total <= ERP_PARTS_PER_PAGE) return '';
+    const max = dashErpPartsPageCount(targets);
+    const page = dashErpPartsCurrentPage(targets);
+    const from = (page - 1) * ERP_PARTS_PER_PAGE + 1;
+    const to = Math.min(page * ERP_PARTS_PER_PAGE, total);
+    const btn = (p, label, disabled, on) =>
+      `<button type="button" data-erp-parts-page="${p}" ${disabled ? 'disabled' : ''}
+        style="min-width:34px;padding:6px 10px;border:1px solid ${on ? '#4f46e5' : '#d1d5db'};background:${on ? '#4f46e5' : '#fff'};color:${on ? '#fff' : '#374151'};border-radius:6px;font-size:12px;font-weight:700;cursor:${disabled ? 'default' : 'pointer'};opacity:${disabled ? '.4' : '1'};font-family:inherit;">${label}</button>`;
+    let nums = '';
+    for (let i = 1; i <= max; i++) nums += btn(i, String(i), false, i === page);
+    return `
+      <div class="erp-parts-pager" style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:8px 12px;margin:${where === 'top' ? '0 0 10px' : '10px 0 0'};">
+        ${btn(page - 1, '◀', page === 1, false)}
+        ${nums}
+        ${btn(page + 1, '▶', page === max, false)}
+        <span style="margin-left:auto;font-size:12px;color:#6b7280;">${total}건 중 <b>${from}~${to}</b>번째 · ${page}/${max}페이지
+          <span style="color:#9ca3af;">(다운로드는 페이지와 상관없이 전체)</span></span>
+      </div>`;
+  }
+
+  // 테이블 본체 렌더 — 케이스별 그룹 + 행별 체크박스 (화면에는 현재 페이지만)
   function dashErpPartsRenderTable(targets) {
     const headerCols = [
       '담당자','거래처코드','거래처명','구매일자','순번','출하창고',
@@ -25100,7 +25180,10 @@
     const hasAnySelection = window._erpPartsSelectedRows && window._erpPartsSelectedRows.size > 0;
     let selectedSeq = 0;    // 체크된 케이스 순번
     let unselectedSeq = 0;  // 체크 안 된 케이스 순번 (다음 회차 미리보기용)
-    targets.forEach(tc => {
+    // (v90) 순번은 전체 기준으로 매기고, 화면에는 현재 페이지 구간만 그린다
+    const _pageStart = (dashErpPartsCurrentPage(targets) - 1) * ERP_PARTS_PER_PAGE;
+    const _pageEnd = _pageStart + ERP_PARTS_PER_PAGE;
+    targets.forEach((tc, _caseIdx) => {
       const customer = tc.customer || {};
       const product = tc.product || {};
       const time = dashFormatTime(tc.erpProcessedAt) || dashFormatTime(tc.createdAt);
@@ -25129,6 +25212,8 @@
 
       // 케이스 그룹 헤더 행 제거 — 엑셀 다운로드 결과와 동일하게 표시
       // (이전에는 "📁 AS-... · 고객명 · 제품명" 그룹 헤더가 있었지만 엑셀에는 없으므로 제거)
+
+      if (_caseIdx < _pageStart || _caseIdx >= _pageEnd) return;  // (v90) 다른 페이지는 화면에만 안 그림
 
       rows.forEach((r, idx) => {
         if (r.uploaded === true) return;   // (v55) 이미 업로드된 행은 큐에 표시 안 함
