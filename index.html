@@ -3804,7 +3804,7 @@
           <button type="button" id="dashMinwonFilterBtn" onclick="dashToggleMinwonFilter()" style="padding:7px 14px;border-radius:8px;border:1.5px solid #fecaca;background:#fff;color:#dc2626;font-weight:700;font-size:13px;cursor:pointer;">🚩 민원</button>
         </div>
         <div class="dash-toolbar-right">
-          <input type="text" id="dashSearchInput" placeholder="🔍 고객명 / 시리얼 / 전화번호" oninput="dashRenderList()">
+          <input type="text" id="dashSearchInput" placeholder="🔍 고객명 / 시리얼 / 전화번호 / 담당자" oninput="dashRenderList()">
           <span id="dashTestDataBtn" style="display:none; gap:4px;">
             <button type="button" class="dash-test-btn" onclick="dashGenerateTestData('무상')">🧪 무상10</button>
             <button type="button" class="dash-test-btn" onclick="dashGenerateTestData('유상')">🧪 유상10</button>
@@ -5186,7 +5186,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v91';
+  const APP_VERSION = 'v92';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -19397,7 +19397,11 @@
         const phone = String(c.customer && c.customer.phone || '').toLowerCase();
         const serial = String(c.product && c.product.serial || '').toLowerCase();
         const product = String(c.product && c.product.name || '').toLowerCase();
-        return name.includes(searchKw) || phone.includes(searchKw) || serial.includes(searchKw) || product.includes(searchKw);
+        // (v92) 담당자로도 검색 — 아이디(영문)와 한글 이름 둘 다 비교
+        const engId = String(c.engineer || '').toLowerCase();
+        const engName = String((window.getDisplayName ? window.getDisplayName(c.engineer || '') : '') || '').toLowerCase();
+        return name.includes(searchKw) || phone.includes(searchKw) || serial.includes(searchKw) || product.includes(searchKw)
+          || engId.includes(searchKw) || engName.includes(searchKw);
       });
     }
 
