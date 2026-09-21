@@ -4170,17 +4170,30 @@
       </div>
       <input type="hidden" id="repairType" value="">
 
-      <!-- 택배비 (일반 유상/무상 선택 시 펼침) -->
+      <!-- (v93) 택배비(타입) / 대체품 / 박스 구매여부 — 공임비·택배비·박스비 분리 -->
       <div class="field-collapsible" id="deliveryFeeField">
-        <label style="font-size:11px; font-weight:700; color:var(--text-muted); display:block; margin-bottom:6px;">택배비 <span style="color:var(--text-light); font-weight:600;">(선택)</span></label>
-        <div class="toggle-group cols-4">
-          <div class="toggle-btn fee-btn fee-paid-only" data-fee="3200" onclick="selectDeliveryFee('3200', this)">편도택배비<span class="fee-amount">3,200원</span></div>
-          <div class="toggle-btn fee-btn fee-paid-only" id="fee6400Btn" data-fee="6400" onclick="selectDeliveryFee('6400', this)"><span id="fee6400Label">왕복택배비</span><span class="fee-amount">6,400원</span></div>
-          <div class="toggle-btn fee-btn" id="feeAltBtn" data-fee="6400" style="display:none;" onclick="selectDeliveryFee('6400', this)">대체품<span class="fee-amount">6,400원</span></div>
-          <div class="toggle-btn fee-btn" data-fee="9000" onclick="selectDeliveryFee('9000', this)">박스구매<span class="fee-amount">9,000원</span></div>
-          <div class="toggle-btn fee-btn" data-fee="12000" onclick="selectDeliveryFee('12000', this)">박스구매<span class="fee-amount">12,000원</span></div>
+        <!-- 택배비 타입 (유상 건에서만) -->
+        <div id="shipTypeBlock">
+          <label style="font-size:11px; font-weight:700; color:var(--text-muted); display:block; margin-bottom:6px;">택배비 <span id="shipModeLabel" style="color:var(--text-light); font-weight:600;">(왕복)</span></label>
+          <div class="toggle-group cols-4" id="shipTypeOpts"></div>
         </div>
+        <!-- 대체품 택배비 (무상 + 대체품 대상 제품) -->
+        <div id="altShipBlock" style="display:none; margin-top:10px;">
+          <label style="font-size:11px; font-weight:700; color:var(--text-muted); display:block; margin-bottom:6px;">대체품 택배비</label>
+          <div class="toggle-group cols-2" id="altShipOpts"></div>
+        </div>
+        <!-- 박스 구매여부 -->
+        <div id="boxFeeBlock" style="margin-top:10px;">
+          <label style="font-size:11px; font-weight:700; color:var(--text-muted); display:block; margin-bottom:6px;">박스 구매여부</label>
+          <div class="toggle-group cols-4" id="boxFeeOpts"></div>
+        </div>
+        <div class="info-box warning" id="parcelFeeGuide" style="display:none; margin-top:10px;"></div>
         <input type="hidden" id="deliveryFee" value="">
+        <input type="hidden" id="shipType" value="">
+        <input type="hidden" id="altShip" value="">
+        <input type="hidden" id="boxFeeSel" value="">
+        <input type="hidden" id="boxFee" value="">
+        <input type="hidden" id="laborFee" value="">
       </div>
 
       <!-- 수령방식 (방문AS 선택 시 펼침) -->
@@ -5186,7 +5199,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v92';
+  const APP_VERSION = 'v93';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -20172,7 +20185,8 @@
 
   // ============================================================
   // (v89) 수리내역서 출력 — 확정 시안(A안)
-  //   · 보증문구·연락처 없음 / 문의 1800-8515 / 부품비 소계에 "(공임비 포함)"
+  //   · 보증문구·연락처 없음 / 문의 1800-8515
+  //   (v93) 부품비 소계 / 공임비 / 택배비 / 박스비를 각각 한 줄로 표시 — "(공임비 포함)" 문구 삭제
   //   · 무상: 부품 금액 0원 표기, 고객 청구 금액은 청구액(택배비 등만)
   //   · 미리보기 창에서 증상·처리내용을 고칠 수 있음 — 인쇄용일 뿐 원본은 안 바뀜
   //   · 사용처: AS 접수 화면의 [🖨️ 수리내역 출력] 버튼 (무상·방문AS 무상 — 출력 시 완료)
@@ -20224,19 +20238,27 @@
     const partAmt = p => isFree ? 0 : partAmtRaw(p);
     const partsSum = parts.reduce((a, p) => a + partAmt(p), 0);
     const delivery = parseInt(c.deliveryFee) || 0;
+    const boxFeeAmt = parseInt(c.boxFee) || 0;                              // (v93)
+    const laborFeeAmt = isFree ? 0 : (parseInt(c.laborFee) || 0);           // (v93)
     const visit = Number(c.visitFee) || 0;
     const extra = Number(c.extraFee) || 0;
     const total = (typeof window._caseExpectedAmount === 'function')
       ? window._caseExpectedAmount(c)
-      : ((isFree ? 0 : partsSum + visit + extra) + delivery);
+      : ((isFree ? 0 : partsSum + visit + extra) + delivery + boxFeeAmt + laborFeeAmt);
 
     const partRows = parts.length
       ? parts.map(p => `<tr><td>${esc(p.name || '-')}</td><td class="qty">${esc(p.qty || p.quantity || 1)}</td><td class="amt">${won(partAmt(p))}</td></tr>`).join('')
       : `<tr><td colspan="3" style="color:#7b8a87;">교체 부품 없음</td></tr>`;
+    // (v93) 부품비 소계 / 공임비 / 택배비 / 박스비를 각각 한 줄로
+    // 고객 수리내역서에는 택배 타입(A타입·D타입 등)을 쓰지 않고 '택배비'로만 표시한다
+    const shipRowLabel = '택배비';
     const feeRows =
+      `<tr><td><b>부품비 소계</b></td><td class="qty"></td><td class="amt"><b>${won(partsSum)}</b></td></tr>` +
+      (laborFeeAmt ? `<tr><td>공임비</td><td class="qty"></td><td class="amt">${won(laborFeeAmt)}</td></tr>` : '') +
       (!isFree && visit ? `<tr><td>출장비</td><td class="qty"></td><td class="amt">${won(visit)}</td></tr>` : '') +
       (!isFree && extra ? `<tr><td>추가비용</td><td class="qty"></td><td class="amt">${won(extra)}</td></tr>` : '') +
-      `<tr><td>택배비</td><td class="qty"></td><td class="amt">${won(delivery)}</td></tr>`;
+      `<tr><td>${esc(shipRowLabel)}</td><td class="qty"></td><td class="amt">${won(delivery)}</td></tr>` +
+      (boxFeeAmt ? `<tr><td>박스비</td><td class="qty"></td><td class="amt">${won(boxFeeAmt)}</td></tr>` : '');
     const badge = isFree ? '<span class="badge">보증기간 내 무상</span>' : '<span class="badge paid">유상 수리</span>';
 
     const html = `<!DOCTYPE html><html lang="ko"><head><meta charset="utf-8">
@@ -20317,7 +20339,6 @@
     <thead><tr><th>부품명</th><th class="qty">수량</th><th class="amt">금액</th></tr></thead>
     <tbody>
       ${partRows}
-      <tr class="sum"><td>부품비 소계 <span class="hint">(공임비 포함)</span></td><td class="qty"></td><td class="amt">${won(partsSum)}</td></tr>
       ${feeRows}
     </tbody>
   </table>
@@ -20408,22 +20429,37 @@
       }).join('<br>');
     }
 
-    // ===== 사용부품 표 (택배비 통합 + 총 발생금액) =====
+    // ===== (v93) 사용부품 + 공임비 / 택배비 / 박스비 + 총 발생금액 =====
     let partsHtml = '';
-    const deliveryFeeVal = parseInt(c.deliveryFee) || 0;
+    const _fees = window._caseFees(c);
+    const deliveryFeeVal = _fees.ship;
+    const laborFeeVal = _fees.labor;
+    const boxFeeVal = _fees.box;
     const partsSubtotal = c.partsTotal || 0;
-    const isFreeRepair = !repairType.includes('유상'); // 무상이면 비용 표시 다르게
-    // 무상이면 부품금액은 0으로 처리 (박스구매 등 택배비만 실비 청구)
-    const effectivePartsSubtotal = isFreeRepair ? 0 : partsSubtotal;
-    const grandTotal = effectivePartsSubtotal + deliveryFeeVal;
+    const isFreeRepair = !_fees.isPaid; // 무상이면 비용 표시 다르게
+    const effectivePartsSubtotal = _fees.parts;
+    const grandTotal = _fees.total;
+    const _feeDocId = String(c._docId || c.id || '');
 
-    if (partsList.length > 0 || deliveryFeeVal > 0) {
+    // 요금 한 줄 (해피콜에서 금액 수정 가능 — 공임비/택배비/박스비)
+    const _feeRow = (kind, icon, label, amount, bg, color) => `
+      <tr style="background:${bg};">
+        <td><span style="color:${color};font-weight:700;">${icon} ${label}</span></td>
+        <td style="text-align:center;">1</td>
+        <td style="text-align:right;color:#9ca3af;">-</td>
+        <td style="text-align:right;font-weight:700;color:${color};white-space:nowrap;">
+          ${amount.toLocaleString()}원
+          <button type="button" onclick="window.dashEditFee('${escapeHtml(_feeDocId)}','${kind}')" title="금액 수정" style="margin-left:6px;padding:2px 8px;background:#fff;border:1px solid #d1d5db;border-radius:5px;font-size:11px;font-weight:700;cursor:pointer;color:#374151;">✏️</button>
+        </td>
+      </tr>`;
+
+    if (partsList.length > 0 || deliveryFeeVal > 0 || boxFeeVal > 0 || laborFeeVal > 0) {
       partsHtml = `
         <div class="dash-case-section">
           <h4>사용부품 및 금액</h4>
           <table class="dash-parts-table">
             <thead>
-              <tr><th>부품명</th><th style="width:60px;text-align:center;">수량</th><th style="width:100px;text-align:right;">단가</th><th style="width:120px;text-align:right;">금액</th></tr>
+              <tr><th>부품명</th><th style="width:60px;text-align:center;">수량</th><th style="width:100px;text-align:right;">단가</th><th style="width:150px;text-align:right;">금액</th></tr>
             </thead>
             <tbody>
               ${partsList.map(p => `
@@ -20431,37 +20467,33 @@
                   <td>${escapeHtml(p.name || '-')}</td>
                   <td style="text-align:center;">${p.qty || 1}</td>
                   <td style="text-align:right;">${(p.price || 0).toLocaleString()}원</td>
-                  <td style="text-align:right;font-weight:600;">${(p.amount || 0).toLocaleString()}원</td>
+                  <td style="text-align:right;font-weight:600;">${(isFreeRepair ? 0 : (p.amount || 0)).toLocaleString()}원</td>
                 </tr>
               `).join('')}
-              ${deliveryFeeVal > 0 ? `
-                <tr style="background:#fff8eb;">
-                  <td><span style="color:#92400e;font-weight:600;">🚚 ${
-                    deliveryFeeVal === 3200 ? '편도택배비' :
-                    deliveryFeeVal === 6400 ? '왕복택배비' :
-                    deliveryFeeVal === 9000 ? '박스구매' :
-                    deliveryFeeVal === 12000 ? '박스구매' :
-                    '택배비'
-                  }</span></td>
-                  <td style="text-align:center;">1</td>
-                  <td style="text-align:right;color:#9ca3af;">-</td>
-                  <td style="text-align:right;font-weight:600;color:#92400e;">${deliveryFeeVal.toLocaleString()}원</td>
-                </tr>
-              ` : ''}
+              ${laborFeeVal > 0 ? _feeRow('labor', '🛠️', escapeHtml(window.LABOR_FEE_NAME), laborFeeVal, '#eef2ff', '#3730a3') : ''}
+              ${deliveryFeeVal > 0 ? _feeRow('ship', '🚚', escapeHtml(window._shipFeeLabel(c)), deliveryFeeVal, '#fff8eb', '#92400e') : ''}
+              ${boxFeeVal > 0 ? _feeRow('box', '📦', '박스비', boxFeeVal, '#f0fdf4', '#166534') : ''}
             </tbody>
             <tfoot>
               <tr>
                 <td colspan="3" style="text-align:right;font-weight:700;">
-                  ${deliveryFeeVal > 0
-                    ? (isFreeRepair
-                        ? `총 발생금액 <span style="font-size:11px;color:#9ca3af;font-weight:500;">(부품 무상 + 택배비 ${deliveryFeeVal.toLocaleString()}원)</span>`
-                        : `총 발생금액 <span style="font-size:11px;color:#9ca3af;font-weight:500;">(부품 ${partsSubtotal.toLocaleString()}원 + 택배비 ${deliveryFeeVal.toLocaleString()}원)</span>`)
-                    : '총 발생금액'}
+                  총 발생금액
+                  <span style="font-size:11px;color:#9ca3af;font-weight:500;">(${[
+                    `부품 ${effectivePartsSubtotal.toLocaleString()}원`,
+                    laborFeeVal > 0 ? `공임비 ${laborFeeVal.toLocaleString()}원` : '',
+                    deliveryFeeVal > 0 ? `택배비 ${deliveryFeeVal.toLocaleString()}원` : '',
+                    boxFeeVal > 0 ? `박스비 ${boxFeeVal.toLocaleString()}원` : ''
+                  ].filter(Boolean).join(' + ')})</span>
                 </td>
                 <td style="text-align:right;font-weight:800;color:#4f46e5;">${grandTotal.toLocaleString()}원</td>
               </tr>
             </tfoot>
           </table>
+          ${Array.isArray(c.feeEditLog) && c.feeEditLog.length > 0 ? `
+            <div style="margin-top:8px;padding:8px 10px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:6px;font-size:11.5px;color:#475569;line-height:1.7;">
+              <b>금액 변경 기록</b><br>
+              ${c.feeEditLog.slice(-6).map(l => `${escapeHtml(l.label || '')} ${(Number(l.from)||0).toLocaleString()}원 → <b>${(Number(l.to)||0).toLocaleString()}원</b> · ${escapeHtml((window.getDisplayName ? window.getDisplayName(l.by) : l.by) || '')} ${escapeHtml(String(l.at || '').slice(0, 16).replace('T', ' '))}`).join('<br>')}
+            </div>` : ''}
           ${isFreeRepair && grandTotal === 0 ? '<div style="margin-top:6px;text-align:right;font-size:12px;color:#10b981;font-weight:700;">✅ 무상 수리 (비용 없음)</div>' : ''}
         </div>
       `;
@@ -21378,7 +21410,8 @@
         });
       } else {
         // 무상: 택배비 선택 여부에 따라 분기
-        const hasFreeDeliveryFee = Number(c.deliveryFee || 0) > 0;
+        // (v93) 택배비 또는 박스비 중 하나라도 있으면 입금 받을 게 있는 건
+        const hasFreeDeliveryFee = (Number(c.deliveryFee || 0) + Number(c.boxFee || 0)) > 0;
         if (hasFreeDeliveryFee) {
           // 무상 + 택배비 있으면 → 입금대기
           buttons.push({
@@ -21699,7 +21732,10 @@
     const _bosangParts = Array.isArray(c.partsUsed) ? c.partsUsed : [];
     const _bosangPartsSum = _bosangParts.reduce((s, p) => s + (Number(p.price||0) * Number(p.qty||p.quantity||1)), 0);
     const _bosangDelivery = Number(c.deliveryFee || 0);
-    const _bosangGrand = _bosangPartsSum + _bosangDelivery;
+    // (v93) 공임비(유상만) + 박스비도 안내 금액에 포함
+    const _bosangLabor = repairType.includes('유상') ? (Number(c.laborFee) || 0) : 0;
+    const _bosangBox = Number(c.boxFee || 0);
+    const _bosangGrand = _bosangPartsSum + _bosangDelivery + _bosangLabor + _bosangBox;
     const totalStr = _bosangGrand > 0 ? `${_bosangGrand.toLocaleString()}원` : '금액 미정';
     const newTreatment = `${totalStr} 발생으로 보상판매 수긍, 보상판매 진행`;
 
@@ -21716,7 +21752,9 @@
         treatmentContent: newTreatment,
         partsUsed: [],
         partsTotal: 0,
-        deliveryFee: 0
+        deliveryFee: 0,
+        laborFee: 0,   // (v93)
+        boxFee: 0      // (v93)
       }
     });
     // (v27) AS 입고 차감 이력 — 원래 입고된 날짜에서 -1
@@ -21771,7 +21809,9 @@
         treatmentContent: newTreatment,
         partsUsed: [],
         partsTotal: 0,
-        deliveryFee: DISCARD_ONEWAY_DELIVERY_FEE
+        deliveryFee: DISCARD_ONEWAY_DELIVERY_FEE,
+        laborFee: 0,   // (v93)
+        boxFee: 0      // (v93)
       }
     });
     // (v27) AS 입고 차감 이력 — 원래 입고된 날짜에서 -1
@@ -22822,6 +22862,10 @@
     if (c.extraFee) grandTotal += Number(c.extraFee) || 0;
     const deliveryFeeForTotal = Number(c.deliveryFee || 0);
     grandTotal += deliveryFeeForTotal;
+    // (v93) 공임비(유상만) + 박스비
+    const laborFeeForTotal = isFreeRepair ? 0 : (Number(c.laborFee) || 0);
+    const boxFeeForTotal = Number(c.boxFee) || 0;
+    grandTotal += laborFeeForTotal + boxFeeForTotal;
 
     // (v24) 입고 품목(=회수품목). 교환/반품은 환불대상 기준으로 표시 (recovery 비었을 때 fallback)
     let intakeItems;
@@ -22874,23 +22918,22 @@
     }
     const notesText = c.notes || c.notesContent || '-';
     let amountText = '';
+    // (v93) 부품비 / 공임비 / 택배비 / 박스비를 각각 적어 준다
+    const _amtBreak = [];
     if (isFreeRepair) {
-      // 무상 — 부품금액 0원, 박스구매 등 택배비만 있으면 그 금액만 표시
-      const freeDelivery = Number(c.deliveryFee || 0);
-      if (freeDelivery > 0) {
-        const feeLabel = freeDelivery === 3200 ? '편도택배비' :
-                         freeDelivery === 6400 ? '왕복택배비' :
-                         freeDelivery === 9000 ? '박스구매' :
-                         freeDelivery === 12000 ? '박스구매' : '택배비';
-        amountText = `${freeDelivery.toLocaleString()}원 (${feeLabel})`;
-      } else {
-        amountText = '무상';
-      }
+      if (deliveryFeeForTotal > 0) _amtBreak.push(`택배비 ${deliveryFeeForTotal.toLocaleString()}원`);
+      if (boxFeeForTotal > 0) _amtBreak.push(`박스비 ${boxFeeForTotal.toLocaleString()}원`);
+      const freeTotal = deliveryFeeForTotal + boxFeeForTotal;
+      amountText = freeTotal > 0 ? `${freeTotal.toLocaleString()}원 (${_amtBreak.join(' + ')})` : '무상';
     } else {
+      const partsOnly = grandTotal - deliveryFeeForTotal - laborFeeForTotal - boxFeeForTotal;
+      if (partsOnly > 0) _amtBreak.push(`부품 ${partsOnly.toLocaleString()}원`);
+      if (laborFeeForTotal > 0) _amtBreak.push(`공임비 ${laborFeeForTotal.toLocaleString()}원`);
+      if (deliveryFeeForTotal > 0) _amtBreak.push(`택배비 ${deliveryFeeForTotal.toLocaleString()}원`);
+      if (boxFeeForTotal > 0) _amtBreak.push(`박스비 ${boxFeeForTotal.toLocaleString()}원`);
       if (grandTotal > 0) {
-        const partsOnly = grandTotal - deliveryFeeForTotal;
-        amountText = deliveryFeeForTotal > 0
-          ? `${grandTotal.toLocaleString()}원 (부품 ${partsOnly.toLocaleString()}원 + 택배비 ${deliveryFeeForTotal.toLocaleString()}원)`
+        amountText = _amtBreak.length > 1
+          ? `${grandTotal.toLocaleString()}원 (${_amtBreak.join(' + ')})`
           : `${grandTotal.toLocaleString()}원`;
       } else {
         amountText = '미정';
@@ -23014,14 +23057,16 @@
       }
     } else {
       // 일반 케이스 — 선택된 부품 동적 추가
-      partsUsed.forEach((p, idx) => {
+      let _partSeq = 0;
+      partsUsed.forEach((p) => {
         let partName = '';
         if (typeof p === 'string') partName = p;
         else if (p && typeof p === 'object') partName = p.name || p.partName || '';
         if (partName) {
           const qty = (typeof p === 'object') ? (Number(p.qty || p.quantity) || 1) : 1;
+          _partSeq++;
           fields.push({
-            label: `사용부품${idx + 1}`,
+            label: `사용부품${_partSeq}`,
             value: partName,
             qty,   // (v57) 전산작업 화면에 수량 표시 — 사용부품 업로드(판매조회)와 수량 일치시키기 위함
             mono: false,
@@ -23029,6 +23074,19 @@
           });
         }
       });
+      // (v93) 공임비 — 유상 건은 ERP 전산작업에서 사용부품처럼 한 줄 더 입력한다.
+      //        (사용부품 업로드 엑셀에는 넣지 않음 — partsUsed가 아니라 별도 필드라서 자동 제외)
+      const _laborForErp = String(c.repairType || '').indexOf('유상') >= 0 ? (Number(c.laborFee) || 0) : 0;
+      if (_laborForErp > 0) {
+        _partSeq++;
+        fields.push({
+          label: `사용부품${_partSeq}`,
+          value: window.LABOR_FEE_NAME,
+          qty: 1,
+          mono: false,
+          multiline: false
+        });
+      }
     }
 
     // 포장재 — 새상품 완료 케이스에서 packagingMaterials/packaging 배열 표시
@@ -23153,6 +23211,65 @@
     }
   }
 
+  // ==================== (v93) 요금 금액 수정 (해피콜/엔지니어 공통) ====================
+  // 공임비는 줄을 없앨 수 없고 금액만 고칠 수 있다. 누가 얼마로 바꿨는지 feeEditLog에 남는다.
+  window.dashEditFee = async function(docId, kind) {
+    try {
+      const all = Array.isArray(window.dashAllCases) ? window.dashAllCases : [];
+      const c = all.find(x => x && (x._docId === docId || x.id === docId));
+      if (!c) { showToast('접수 정보를 찾을 수 없습니다', 'error'); return; }
+      const META = {
+        labor: { field: 'laborFee', label: '공임비', step: 1000 },
+        ship:  { field: 'deliveryFee', label: '택배비', step: 100 },
+        box:   { field: 'boxFee', label: '박스비', step: 1000 }
+      };
+      const m = META[kind];
+      if (!m) return;
+      const before = Number(c[m.field]) || 0;
+      const input = window.prompt(`${m.label} 금액을 입력하세요 (원)\n현재: ${before.toLocaleString()}원`, String(before));
+      if (input === null) return;
+      let after = parseInt(String(input).replace(/[^0-9-]/g, ''));
+      if (isNaN(after) || after < 0) { showToast('숫자만 입력하세요', 'warning'); return; }
+      if (after === before) return;
+      if (kind === 'labor' && after === 0) {
+        if (!window.confirm('공임비를 0원으로 하시겠습니까?\n(줄을 없애는 것이 아니라 금액만 0원이 됩니다)')) return;
+      }
+      const logEntry = {
+        kind: kind,
+        label: m.label,
+        from: before,
+        to: after,
+        by: (typeof NAS_USER !== 'undefined' && NAS_USER) ? NAS_USER : '관리자',
+        at: new Date().toISOString()
+      };
+      const update = {};
+      update[m.field] = after;
+      update.feeEditLog = [...(Array.isArray(c.feeEditLog) ? c.feeEditLog : []), logEntry];
+      update.statusHistory = [...(Array.isArray(c.statusHistory) ? c.statusHistory : []), {
+        changedAt: logEntry.at,
+        changedBy: logEntry.by,
+        role: 'happycall',
+        fromStage: c.stage || '',
+        toStage: c.stage || '',
+        action: '금액수정',
+        note: `${m.label} ${before.toLocaleString()}원 → ${after.toLocaleString()}원`
+      }];
+      update.updatedAt = serverTimestamp();
+      await setDoc(doc(db, 'cases', (c._docId || c.id)), update, { merge: true });
+      // 화면 즉시 반영
+      c[m.field] = after;
+      c.feeEditLog = update.feeEditLog;
+      c.statusHistory = update.statusHistory;
+      showToast(`✅ ${m.label} ${after.toLocaleString()}원으로 수정`, 'success');
+      if (typeof window.dashOpenModal === 'function') window.dashOpenModal(c._docId || c.id);
+    } catch (e) {
+      console.error('[금액수정] 실패:', e);
+      showToast('금액 수정 실패: ' + (e.message || e), 'error');
+    }
+  };
+
+  window.dashBuildErpFields = dashBuildErpFields;   // (v93) 콘솔 점검용 노출
+
   // (v13) 케이스에서 ERP 사용부품 업로드용 행 데이터 빌드 — v8 ERP양식 25컬럼 형식
   // 사용부품 + 포장재 합쳐서 각 행 1개씩
   function dashBuildErpPartsRows(c) {
@@ -23270,6 +23387,7 @@
 
     return rows;
   }
+  window.dashBuildErpPartsRows = dashBuildErpPartsRows;   // (v93) 콘솔 점검용 노출
 
   // ==================== 새상품 내역 화면 (v13) ====================
   // 교환·반품 케이스 중 erpProcessed=true + newProductPending=true + newProductCompleted=false
@@ -26637,7 +26755,7 @@
     const repairType = c.repairType || '';
     const isPaid = repairType.includes('유상');
     // 무상 + 박스구매(택배비만) → 바로 완료
-    const isFreeBoxOnly = !isPaid && Number(c.deliveryFee || 0) > 0;
+    const isFreeBoxOnly = !isPaid && (Number(c.deliveryFee || 0) + Number(c.boxFee || 0)) > 0;  // (v93) 박스비 포함
     const toStage = isFreeBoxOnly ? '해피콜완료' : '수리대기';
     await dashApplyStageChange(c, toStage, {
       note,
@@ -26684,7 +26802,10 @@
         }
       });
     }
-    let total = (isFreeRepair ? 0 : partsSubtotal) + deliveryFeeVal;
+    // (v93) 공임비(유상만) + 박스비를 함께 청구
+    const boxFeeVal = parseInt(c.boxFee) || 0;
+    const laborFeeVal = isFreeRepair ? 0 : (parseInt(c.laborFee) || 0);
+    let total = (isFreeRepair ? 0 : partsSubtotal) + laborFeeVal + deliveryFeeVal + boxFeeVal;
     if (!isFreeRepair) { // 방문비·추가비는 유상일 때만 청구
       if (c.visitFee) total += Number(c.visitFee) || 0;
       if (c.extraFee) total += Number(c.extraFee) || 0;
@@ -27725,9 +27846,13 @@
       window.selectRepairType(c.repairType);
     }
 
-    // 택배비
-    if (c.deliveryFee && typeof window.selectDeliveryFee === 'function') {
-      window.selectDeliveryFee(String(c.deliveryFee));
+    // (v93) 수령방식 먼저 — 택배비 규칙(편도/왕복)이 여기에 달려 있음
+    if (c.receiveType && typeof window.selectReceiveType === 'function') {
+      window.selectReceiveType(c.receiveType);
+    }
+    // (v93) 택배비 / 박스비 / 공임비 복원
+    if (typeof window.feeRestoreForm === 'function') {
+      window.feeRestoreForm(c);
     }
 
     // 불량 정보 (1~5번)
@@ -28031,6 +28156,8 @@
         // (v25) 버그 수정: 수정 모드에서 새로 선택한 택배비(박스구매 등)도 저장
         //        기존엔 수집 목록에 없어 폼에서 선택해도 케이스 금액에 반영 안 됐음
         deliveryFee: parseInt(setEls('deliveryFee') || '0', 10) || 0,
+        // (v93) 공임비 · 택배비 타입 · 박스비
+        ...window.feeCollectForm(),
       };
     };
 
@@ -28081,6 +28208,11 @@
       partsUsed: formData.partsUsed,
       partsTotal: formData.partsTotal,
       deliveryFee: formData.deliveryFee,  // (v25) 수정 모드 택배비 저장
+      shipType: formData.shipType,        // (v93)
+      altShip: formData.altShip,          // (v93)
+      boxFeeSel: formData.boxFeeSel,      // (v93)
+      boxFee: formData.boxFee,            // (v93)
+      laborFee: formData.laborFee,        // (v93)
       statusUpdatedAt: serverTimestamp(),
       statusUpdatedBy: NAS_USER || '관리자',
       updatedAt: serverTimestamp(),
@@ -29473,22 +29605,269 @@
   //                        단 분유포트 유상은 v51 그대로 '왕복택배비/대체품' 유지(유상은 변경 없음).
   //   - 대체품(6,400, feeAltBtn): 분유포트 iEK01 + 무상일 때만 별도 버튼으로 노출.
   //   - 편도택배비(3,200): 유상만(기존 fee-paid-only 그대로).
+  // (v93) 아래 함수는 이름만 유지 — 실제 동작은 요금 엔진(feeRenderForm)이 담당
   window.applyBunyuPortFee = function() {
-    const btn = document.getElementById('fee6400Btn');     // 왕복택배비
-    const label = document.getElementById('fee6400Label');
-    const alt = document.getElementById('feeAltBtn');       // 대체품(분유포트 무상 전용)
-    if (!btn || !label) return;
-    const prod = (document.getElementById('productName')?.value || '');
-    const isBunyu = /iEK01/i.test(prod) || prod.includes('분유포트');
-    const rt = document.getElementById('repairType')?.value || '';
-    const isPaid = rt === '유상';   // 방문AS 등은 제외 (정확히 '유상'만)
-    const isFree = rt === '무상';
-    // 왕복택배비: 무상/유상 모두 노출, 그 외(방문·확인요청)는 숨김
-    btn.style.display = (isFree || isPaid) ? '' : 'none';
-    // 라벨: 분유포트 유상만 '왕복택배비/대체품'(v51 유지), 그 외엔 '왕복택배비'
-    label.textContent = (isBunyu && isPaid) ? '왕복택배비/대체품' : '왕복택배비';
-    // 대체품: 분유포트 + 무상일 때만 노출
-    if (alt) alt.style.display = (isBunyu && isFree) ? '' : 'none';
+    if (typeof window.feeRenderForm === 'function') window.feeRenderForm();
+  };
+
+  // ==================== (v93) 공임비 · 택배비 · 박스비 엔진 ====================
+  // 규칙 (9/21 확정)
+  //  - 공임비: 유상(방문AS 유상 포함) 건에 20,000원 자동. 줄 삭제 불가, 금액만 수정 가능.
+  //  - 택배비: A/B/C/D/E/S/F 타입에서 선택 (왕복). 방문AS + 택배수령이면 편도(절반).
+  //            무상은 택배비를 묻지 않음 — 대체품 대상 제품(분유포트)만 대체품 택배비.
+  //  - 박스비: 9,000 / 12,000 / 미구매 중 선택.
+  //  - 확인요청, 방문AS + 직접수령: 택배비·박스비 모두 없음.
+  window.SHIP_FEE_TYPES = [
+    { k: 'A', v: 6400 }, { k: 'B', v: 6400 }, { k: 'C', v: 6400 },
+    { k: 'D', v: 12000 }, { k: 'E', v: 12000 }, { k: 'S', v: 12000 },
+    { k: 'F', v: 22000 }
+  ];
+  window.BOX_FEE_OPTIONS = [9000, 12000];
+  window.LABOR_FEE_DEFAULT = 20000;
+  window.LABOR_FEE_NAME = '공임비 A';
+  window.LABOR_FEE_CODE = '작업-10';
+
+  // ──────────────────────────────────────────────────────────
+  // (v93) 무상 AS 택배비 스위치  — 9/21 조유림 조장 결정
+  //   true  = 일반 '무상' 건에도 택배비 타입(A~F·S)을 물어본다.
+  //           1회 무상 수리처럼 수리비·공임비는 무료지만 택배비는 받아야 하는
+  //           경우가 있어서, 엔지니어가 필요할 때 고를 수 있게 열어둔다.
+  //           (기본 선택은 '없음'이므로 안 고르면 0원 — 기존과 동일)
+  //           이때 '대체품' 칸은 A타입 6,400원과 같으므로 숨겨진다.
+  //   false = 무상은 택배비를 아예 묻지 않음 (v93 이전 정책)
+  //   ※ '방문AS 무상'은 이 스위치와 무관하게 항상 택배비를 묻지 않는다.
+  // ──────────────────────────────────────────────────────────
+  window.FREE_AS_SHIP_FEE = true;
+
+  // 무상 대체품 택배비가 붙는 제품 (현재는 분유포트 iEK01만)
+  window.altShipFeeForProduct = function(productName) {
+    const n = String(productName || '');
+    return (/iEK01/i.test(n) || n.indexOf('분유포트') >= 0) ? 6400 : 0;
+  };
+
+  // 수리유형 + 수령방식으로 요금 규칙 판정
+  window.feeRules = function(repairType, receiveType) {
+    const rt = String(repairType || '');
+    const recv = String(receiveType || '');
+    const isVisit = rt.indexOf('방문AS') === 0;
+    const isPaid = rt.indexOf('유상') >= 0;
+    const half = isVisit && recv === '택배수령';
+    const show = (rt === '무상' || rt === '유상' || (isVisit && recv === '택배수령'));
+    return { rt: rt, recv: recv, isVisit: isVisit, isPaid: isPaid, half: half, show: show };
+  };
+
+  window.shipFeeBase = function(typeKey, half) {
+    const t = window.SHIP_FEE_TYPES.find(function(s) { return s.k === typeKey; });
+    if (!t) return 0;
+    return half ? Math.round(t.v / 2) : t.v;
+  };
+
+  // 엔지니어가 직접 고친 금액 (null이면 기본값 사용)
+  window._feeEdit = { labor: null, ship: null, box: null };
+
+  function _feeSet(id, v) { const el = document.getElementById(id); if (el) el.value = (v == null ? '' : String(v)); }
+  function _feeGet(id) { const el = document.getElementById(id); return el ? el.value : ''; }
+
+  // 폼의 택배비/박스/공임비 영역을 규칙대로 다시 그린다
+  window.feeRenderForm = function() {
+    const field = document.getElementById('deliveryFeeField');
+    if (!field) return;
+    const rt = (document.getElementById('repairType') || {}).value || '';
+    const recv = (document.getElementById('receiveType') || {}).value || '';
+    const prod = (document.getElementById('productName') || {}).value || '';
+    const r = window.feeRules(rt, recv);
+    const altAmt = window.altShipFeeForProduct(prod);
+
+    field.classList.toggle('open', !!r.show);
+
+    // --- 공임비 (유상이면 항상. 택배비 영역 노출 여부와 무관) ---
+    const labor = r.isPaid
+      ? (window._feeEdit.labor != null ? window._feeEdit.labor : window.LABOR_FEE_DEFAULT)
+      : 0;
+    _feeSet('laborFee', labor || '');
+
+    // --- 택배비 타입 (유상 / 일반 무상. '방문AS 무상'은 제외) ---
+    const askShipType = r.isPaid || (r.rt === '무상' && window.FREE_AS_SHIP_FEE === true);
+    const showShip = r.show && askShipType;
+    const shipBlock = document.getElementById('shipTypeBlock');
+    if (shipBlock) shipBlock.style.display = showShip ? '' : 'none';
+    const modeLabel = document.getElementById('shipModeLabel');
+    if (modeLabel) modeLabel.textContent = r.half ? '(편도 — 왕복 금액의 절반)' : '(왕복)';
+    let shipType = _feeGet('shipType');
+    if (!showShip) shipType = '';
+    const shipOpts = document.getElementById('shipTypeOpts');
+    if (shipOpts) {
+      shipOpts.innerHTML = window.SHIP_FEE_TYPES.map(function(t) {
+        return '<div class="toggle-btn fee-btn' + (shipType === t.k ? ' active' : '') + '" data-shiptype="' + t.k + '">' +
+               t.k + '타입<span class="fee-amount">' + window.shipFeeBase(t.k, r.half).toLocaleString() + '원</span></div>';
+      }).join('') +
+      '<div class="toggle-btn fee-btn' + (shipType === '' ? ' active' : '') + '" data-shiptype="">없음<span class="fee-amount">0원</span></div>';
+    }
+
+    // --- 대체품 택배비 (무상 + 대체품 대상 제품) ---
+    //     무상도 택배비 타입을 묻는 정책이면 대체품 칸은 필요 없다
+    const showAlt = r.show && !askShipType && altAmt > 0;
+    const altBlock = document.getElementById('altShipBlock');
+    if (altBlock) altBlock.style.display = showAlt ? '' : 'none';
+    let altSel = _feeGet('altShip');
+    if (!showAlt) altSel = '';
+    const altOpts = document.getElementById('altShipOpts');
+    if (altOpts) {
+      altOpts.innerHTML =
+        '<div class="toggle-btn fee-btn' + (altSel === '1' ? ' active' : '') + '" data-altship="1">대체품 신청<span class="fee-amount">' + altAmt.toLocaleString() + '원</span></div>' +
+        '<div class="toggle-btn fee-btn' + (altSel === '0' ? ' active' : '') + '" data-altship="0">해당 없음<span class="fee-amount">0원</span></div>';
+    }
+
+    // --- 택배비 금액 확정 ---
+    let shipFee = 0;
+    if (r.show) {
+      if (askShipType) {
+        shipFee = shipType ? (window._feeEdit.ship != null ? window._feeEdit.ship : window.shipFeeBase(shipType, r.half)) : 0;
+      } else {
+        shipFee = (altSel === '1') ? (window._feeEdit.ship != null ? window._feeEdit.ship : altAmt) : 0;
+      }
+    }
+    _feeSet('shipType', shipType);
+    _feeSet('altShip', altSel);
+    _feeSet('deliveryFee', shipFee || '');
+
+    // --- 박스 구매여부 ---
+    const boxBlock = document.getElementById('boxFeeBlock');
+    if (boxBlock) boxBlock.style.display = r.show ? '' : 'none';
+    let boxSel = _feeGet('boxFeeSel');
+    if (!r.show) boxSel = '';
+    const boxOpts = document.getElementById('boxFeeOpts');
+    if (boxOpts) {
+      boxOpts.innerHTML = window.BOX_FEE_OPTIONS.map(function(v) {
+        return '<div class="toggle-btn fee-btn' + (boxSel === String(v) ? ' active' : '') + '" data-boxfee="' + v + '">📦 구매<span class="fee-amount">' + v.toLocaleString() + '원</span></div>';
+      }).join('') +
+      '<div class="toggle-btn fee-btn' + (boxSel === '0' ? ' active' : '') + '" data-boxfee="0">미구매<span class="fee-amount">0원</span></div>';
+    }
+    const boxFee = (r.show && boxSel && boxSel !== '0')
+      ? (window._feeEdit.box != null ? window._feeEdit.box : (parseInt(boxSel) || 0))
+      : 0;
+    _feeSet('boxFeeSel', boxSel);
+    _feeSet('boxFee', boxFee || '');
+
+    // --- 택배수령 안내 ---
+    const guide = document.getElementById('parcelFeeGuide');
+    if (guide) {
+      if (r.isVisit && r.recv === '택배수령') {
+        guide.style.display = '';
+        guide.innerHTML = '⚠️ <strong>택배수령 건입니다.</strong> 고객에게 <strong>빈박스 구매비</strong>' +
+          (askShipType ? '와 <strong>편도 택배비</strong>' : '') + '가 발생한다고 안내하세요.';
+      } else {
+        guide.style.display = 'none';
+        guide.innerHTML = '';
+      }
+    }
+
+    // --- 버튼 클릭 바인딩 (한 번만) ---
+    if (!field._v93Bound) {
+      field._v93Bound = true;
+      field.addEventListener('click', function(ev) {
+        const b = ev.target && ev.target.closest ? ev.target.closest('[data-shiptype],[data-altship],[data-boxfee]') : null;
+        if (!b) return;
+        if (b.hasAttribute('data-shiptype')) { _feeSet('shipType', b.getAttribute('data-shiptype')); window._feeEdit.ship = null; }
+        else if (b.hasAttribute('data-altship')) { _feeSet('altShip', b.getAttribute('data-altship')); window._feeEdit.ship = null; }
+        else if (b.hasAttribute('data-boxfee')) { _feeSet('boxFeeSel', b.getAttribute('data-boxfee')); window._feeEdit.box = null; }
+        window.feeRenderForm();
+      });
+    }
+
+    if (typeof renderQtyTable === 'function') renderQtyTable();
+    if (typeof updateTreatmentContent === 'function') updateTreatmentContent();
+  };
+
+  // 폼에 저장된 케이스의 요금 복원 (수정 모드 / 임시저장 불러오기)
+  window.feeRestoreForm = function(c) {
+    c = c || {};
+    window._feeEdit = { labor: null, ship: null, box: null };
+    const shipAmt = parseInt(c.deliveryFee) || 0;
+    const legacy = (c.shipType == null && c.boxFee == null && c.laborFee == null);
+    let shipType = '', altSel = '', boxSel = '';
+    if (legacy) {
+      // v92 이전 케이스 — deliveryFee 한 칸에 택배비/박스구매가 섞여 있었음
+      if (shipAmt === 9000 || shipAmt === 12000) {
+        boxSel = String(shipAmt);
+      } else if (shipAmt > 0) {
+        const t = window.SHIP_FEE_TYPES.find(function(x) { return x.v === shipAmt; });
+        if (t) shipType = t.k; else altSel = '1';
+      }
+    } else {
+      shipType = String(c.shipType || '');
+      altSel = c.altShip === true ? '1' : (c.altShip === false ? '0' : '');
+      boxSel = (c.boxFeeSel != null && c.boxFeeSel !== '') ? String(c.boxFeeSel)
+             : ((parseInt(c.boxFee) || 0) ? String(parseInt(c.boxFee)) : '');
+    }
+    _feeSet('shipType', shipType);
+    _feeSet('altShip', altSel);
+    _feeSet('boxFeeSel', boxSel);
+    window.feeRenderForm();
+    // 저장된 금액이 기본값과 다르면 '직접 고친 금액'으로 되살린다
+    if (shipAmt > 0 && (parseInt(_feeGet('deliveryFee')) || 0) !== shipAmt) window._feeEdit.ship = shipAmt;
+    const boxAmt = parseInt(c.boxFee) || 0;
+    if (boxAmt > 0 && (parseInt(_feeGet('boxFee')) || 0) !== boxAmt) window._feeEdit.box = boxAmt;
+    if (c.laborFee != null) {
+      const laborAmt = parseInt(c.laborFee) || 0;
+      if (laborAmt !== (parseInt(_feeGet('laborFee')) || 0)) window._feeEdit.labor = laborAmt;
+    }
+    window.feeRenderForm();
+  };
+
+  // 폼의 현재 요금 값을 저장용으로 모아준다
+  window.feeCollectForm = function() {
+    return {
+      deliveryFee: parseInt(_feeGet('deliveryFee')) || 0,
+      shipType: _feeGet('shipType') || '',
+      altShip: _feeGet('altShip') === '1',
+      boxFeeSel: _feeGet('boxFeeSel') || '',
+      boxFee: parseInt(_feeGet('boxFee')) || 0,
+      laborFee: parseInt(_feeGet('laborFee')) || 0
+    };
+  };
+
+  // 케이스(저장된 문서)의 요금 4종 — 화면 어디서든 같은 규칙으로 계산
+  window._caseFees = function(c) {
+    c = c || {};
+    const rt = String(c.repairType || '');
+    const isPaid = rt.indexOf('유상') >= 0;
+    let parts = Number(c.partsTotal);
+    if (isNaN(parts)) {
+      parts = 0;
+      (Array.isArray(c.partsUsed) ? c.partsUsed : []).forEach(function(p) {
+        if (p && typeof p === 'object') {
+          if (p.amount != null && !isNaN(p.amount)) parts += Number(p.amount);
+          else parts += (Number(p.price || p.unitPrice || 0)) * (Number(p.qty || p.quantity || 1));
+        }
+      });
+    }
+    if (!isPaid) parts = 0;                       // 무상은 부품값 청구 안 함
+    const labor = isPaid ? (Number(c.laborFee) || 0) : 0;
+    const ship = Number(c.deliveryFee) || 0;
+    const box = Number(c.boxFee) || 0;
+    const visit = isPaid ? (Number(c.visitFee) || 0) : 0;
+    const extra = isPaid ? (Number(c.extraFee) || 0) : 0;
+    return {
+      isPaid: isPaid, parts: parts, labor: labor, ship: ship, box: box,
+      visit: visit, extra: extra,
+      total: parts + labor + ship + box + visit + extra,
+      shipType: String(c.shipType || ''),
+      half: (rt.indexOf('방문AS') === 0 && c.receiveType === '택배수령')
+    };
+  };
+
+  // 택배비 줄 이름 (구버전 케이스 호환)
+  window._shipFeeLabel = function(c) {
+    const f = window._caseFees(c);
+    if (!f.ship) return '택배비';
+    if (f.shipType) return '택배비 (' + f.shipType + '타입' + (f.half ? ' · 편도' : '') + ')';
+    if (c && c.altShip) return '택배비 (대체품)';
+    // v92 이전 데이터
+    if (f.ship === 3200) return '편도택배비';
+    if (f.ship === 6400) return '왕복택배비';
+    if (f.ship === 9000 || f.ship === 12000) return '박스구매';
+    return '택배비';
   };
 
   // (v89) 수리유형이 바뀔 때마다 [수리내역 출력] 버튼 표시 갱신
@@ -29510,8 +29889,7 @@
       document.getElementById('repairType').value = '';
       // 택배비 / 수령방식 / 안내박스 모두 닫고 초기화
       document.getElementById('deliveryFeeField').classList.remove('open');
-      document.getElementById('deliveryFee').value = '';
-      document.querySelectorAll('#deliveryFeeField .toggle-btn').forEach(b => b.classList.remove('active'));
+      window._feeClearForm();   // (v93) 택배비/박스비/공임비 초기화
       document.getElementById('receiveTypeField').classList.remove('open');
       document.getElementById('receiveType').value = '';
       document.querySelectorAll('#receiveTypeField .toggle-btn').forEach(b => b.classList.remove('active'));
@@ -29546,30 +29924,8 @@
     const isReinspect = value === '확인요청';
     const isNormal = !isVisitAS && !isReinspect;
 
-    // 택배비 펼침/접힘
-    const isPaid = value === '유상' || value.includes('유상');
-    const isFreeNormal = value === '무상';
-    const feeField = document.getElementById('deliveryFeeField');
-    // 무상/유상 모두 박스구매 탭은 표시 (편도/왕복은 유상만)
-    feeField.classList.toggle('open', isNormal);
-    // 편도/왕복 버튼 — 유상만 표시
-    document.querySelectorAll('.fee-paid-only').forEach(btn => {
-      btn.style.display = isPaid ? '' : 'none';
-    });
-    // (v50) 분유포트 iEK01이면 6,400원 버튼 라벨/노출을 위 기본 규칙 위에 덮어씀
-    if (window.applyBunyuPortFee) window.applyBunyuPortFee();
-    if (!isNormal) {
-      // 방문/확인요청으로 바꿀 때 택배비 초기화
-      document.getElementById('deliveryFee').value = '';
-      document.querySelectorAll('#deliveryFeeField .toggle-btn').forEach(b => b.classList.remove('active'));
-    } else if (isFreeNormal) {
-      // 무상으로 바꿀 때: 편도(3,200)만 해제. 왕복(6,400)·박스·대체품은 무상에서도 유효하므로 유지.
-      const feeVal = parseInt(document.getElementById('deliveryFee').value || '0');
-      if (feeVal === 3200) {
-        document.getElementById('deliveryFee').value = '';
-        document.querySelectorAll('#deliveryFeeField .toggle-btn').forEach(b => b.classList.remove('active'));
-      }
-    }
+    // (v93) 수리유형이 바뀌면 택배비/박스비 선택은 초기화하고 규칙대로 다시 그린다
+    window._feeClearForm();
 
     // 수령방식 펼침/접힘 (방문AS에서만)
     const receiveField = document.getElementById('receiveTypeField');
@@ -29602,44 +29958,26 @@
       if (confirmReasonForClear) confirmReasonForClear.value = '';
     }
 
-    // 택배비 변경되었을 수 있으니 사용부품 표 갱신
-    if (typeof renderQtyTable === 'function') renderQtyTable();
+    // (v93) 택배비/박스비/공임비 규칙 적용 + 사용부품 표 갱신
+    window.feeRenderForm();
+  };
+
+  // (v93) 폼의 택배비/박스비/공임비 선택을 모두 비우고 다시 그린다
+  window._feeClearForm = function() {
+    window._feeEdit = { labor: null, ship: null, box: null };
+    ['shipType', 'altShip', 'boxFeeSel', 'boxFee', 'deliveryFee', 'laborFee'].forEach(function(id) {
+      const el = document.getElementById(id);
+      if (el) el.value = '';
+    });
+    if (typeof window.feeRenderForm === 'function') window.feeRenderForm();
   };
 
   // ==================== 택배비 토글 ====================
   // 같은 버튼 다시 누르면 해제. 다른 버튼 누르면 그쪽으로 이동.
   // 변경 시 renderQtyTable 호출해서 사용부품 합계에 반영
-  window.selectDeliveryFee = function(value, el) {
-    // (v52) el(클릭한 버튼)이 있으면 그 버튼 기준으로 토글/활성 — 같은 값(6,400)이
-    //        둘(왕복택배비·대체품)이어도 하나만 켜지고 정확히 토글된다.
-    //        el이 없으면(케이스 복원 시) 기존처럼 값으로 매칭한다.
-    if (el) {
-      const isToggleOff = el.classList.contains('active'); // 켜져 있던 같은 버튼 재클릭 → 해제
-      document.querySelectorAll('#deliveryFeeField .toggle-btn').forEach(b => b.classList.remove('active'));
-      if (isToggleOff) {
-        document.getElementById('deliveryFee').value = '';
-      } else {
-        el.classList.add('active');
-        document.getElementById('deliveryFee').value = value;
-      }
-    } else {
-      const currentVal = document.getElementById('deliveryFee').value;
-      const isToggleOff = (currentVal === value);
-      if (isToggleOff) {
-        document.querySelectorAll('#deliveryFeeField .toggle-btn').forEach(b => b.classList.remove('active'));
-        document.getElementById('deliveryFee').value = '';
-      } else {
-        document.querySelectorAll('#deliveryFeeField .toggle-btn').forEach(b => {
-          b.classList.toggle('active', b.dataset.fee === value);
-        });
-        document.getElementById('deliveryFee').value = value;
-      }
-    }
-
-    // 사용부품 표에 택배비 반영 (renderQtyTable이 deliveryFee를 직접 읽음)
-    if (typeof renderQtyTable === 'function') renderQtyTable();
-    // 처리내용도 갱신 (택배비는 처리내용에 안 들어가지만, 합계 변동 알림용으로 안전 호출)
-    if (typeof updateTreatmentContent === 'function') updateTreatmentContent();
+  // (v93) 구버전 호환 — 금액만 넘어오는 옛 호출을 새 구조로 옮겨 담는다
+  window.selectDeliveryFee = function(value) {
+    window.feeRestoreForm({ deliveryFee: parseInt(value) || 0 });
   };
 
   // ==================== 수령방식 토글 ====================
@@ -29654,6 +29992,7 @@
       document.getElementById('receiveType').value = '';
       document.getElementById('directReceiveGuide').style.display = 'none';
       document.getElementById('parcelReceiveGuide').style.display = 'none';
+      window._feeClearForm();   // (v93)
       return;
     }
 
@@ -29665,6 +30004,9 @@
     // 안내 박스 토글
     document.getElementById('directReceiveGuide').style.display = (value === '직접수령') ? 'block' : 'none';
     document.getElementById('parcelReceiveGuide').style.display = (value === '택배수령') ? 'block' : 'none';
+
+    // (v93) 수령방식에 따라 택배비 편도/왕복·노출이 달라진다
+    window._feeClearForm();
   };
 
   // ==================== 불량 세트 추가/삭제 (1~5번까지) ====================
@@ -30399,7 +30741,10 @@
     const parts = (typeof window._formGetSelectedParts === 'function') ? window._formGetSelectedParts() : [];
     const partsTotal = parts.reduce((sum, p) => sum + (window._partAmount ? window._partAmount(p) : ((p.price || 0) * (Number(p.qty) || 1))), 0);
     const deliveryFee = parseInt(document.getElementById('deliveryFee')?.value || '0') || 0;
-    const total = partsTotal + deliveryFee;
+    // (v93) 공임비 + 박스비 포함
+    const _laborNow = parseInt(document.getElementById('laborFee')?.value || '0') || 0;
+    const _boxNow = parseInt(document.getElementById('boxFee')?.value || '0') || 0;
+    const total = partsTotal + deliveryFee + _laborNow + _boxNow;
     const totalStr = total > 0 ? `${total.toLocaleString()}원` : '금액 미정';
     const bosangLine = `사용부품 총 금액 ${totalStr}이 확인되어 보상판매 안내 요청드립니다.`;
     ta.value = current.trim() ? current.trim() + '\n' + bosangLine : bosangLine;
@@ -30448,9 +30793,17 @@
   };
 
   function renderQtyTable() {
-    // 현재 선택된 택배비 (0이면 미선택)
-    const feeVal = parseInt(document.getElementById('deliveryFee').value || '0');
-    const feeLabel = feeVal === 3200 ? '편도택배비' : (feeVal === 6400 ? '왕복택배비' : '');
+    // (v93) 택배비 / 박스비 / 공임비 — 각각 별도 금액
+    const feeVal = parseInt(document.getElementById('deliveryFee')?.value || '0') || 0;
+    const boxVal = parseInt(document.getElementById('boxFee')?.value || '0') || 0;
+    const laborVal = parseInt(document.getElementById('laborFee')?.value || '0') || 0;
+    const _shipTypeVal = document.getElementById('shipType')?.value || '';
+    const _rtNow = document.getElementById('repairType')?.value || '';
+    const _recvNow = document.getElementById('receiveType')?.value || '';
+    const _rulesNow = window.feeRules(_rtNow, _recvNow);
+    const feeLabel = _shipTypeVal
+      ? (_shipTypeVal + '타입' + (_rulesNow.half ? ' · 편도' : ' · 왕복'))
+      : '대체품';
 
     // 선택된 포장재 모두 표시 (가격 0이어도 행은 표시, 합계엔 0원으로 합산)
     // selectedPackaging은 이름 배열 — 마스터에서 가격/기본수량 조회
@@ -30470,8 +30823,8 @@
       });
     }
 
-    // 부품/택배비/포장재 모두 없으면 표 숨김
-    if (selectedParts.length === 0 && !feeVal && pkgItems.length === 0) {
+    // 부품/택배비/박스비/공임비/포장재 모두 없으면 표 숨김
+    if (selectedParts.length === 0 && !feeVal && !boxVal && !laborVal && pkgItems.length === 0) {
       partsQtyTableEl.classList.remove('open');
       partsQtyTableEl.innerHTML = '';
       return;
@@ -30537,17 +30890,52 @@
       </div>`;
     });
 
-    // 택배비 행 (있을 때만 별도로 표시 — 이미지 디자인 동일)
+    // (v93) 공임비 행 — 유상 건 자동 추가. 줄 삭제 불가, 금액만 수정 가능.
+    if (laborVal > 0 || _rulesNow.isPaid) {
+      totalAmount += laborVal;
+      const _laborEdited = (laborVal !== window.LABOR_FEE_DEFAULT);
+      html += `<div class="qty-row fee-row" style="background:#eef2ff;">
+        <div class="qty-name">🛠️ ${escapeHtml(window.LABOR_FEE_NAME)} <span style="font-size:10px;color:#6366f1;font-weight:700;">자동</span></div>
+        <div class="qty-rack"><span style="color:#9ca3af;">-</span></div>
+        <div class="qty-price">${formatPrice(window.LABOR_FEE_DEFAULT)}</div>
+        <div style="text-align:center;font-size:11px;font-weight:700;">1</div>
+        <div class="qty-amount" style="text-align:right;">
+          <span style="display:inline-flex;align-items:center;gap:2px;justify-content:flex-end;">
+            <input type="number" min="0" step="1000" value="${laborVal}" data-feeedit="labor" title="공임비 — 금액만 수정할 수 있습니다 (줄 삭제 불가)" style="width:82px;text-align:right;border:1.5px solid ${_laborEdited ? '#f59e0b' : '#c7d2fe'};border-radius:5px;padding:3px 6px;font-size:13px;${_laborEdited ? 'background:#fffbeb;font-weight:700;color:#b45309;' : 'background:#fff;font-weight:700;color:#3730a3;'}">원
+          </span>
+          ${_laborEdited ? `<div style="font-size:10px;color:#b45309;">기본 ${formatPrice(window.LABOR_FEE_DEFAULT)}원 → 청구 ${formatPrice(laborVal)}원</div>` : ''}
+        </div>
+      </div>`;
+    }
+
+    // 택배비 행
     if (feeVal > 0) {
       totalAmount += feeVal;
       html += `<div class="qty-row fee-row">
-        <div class="qty-name">🚚 ${feeLabel} ${formatPrice(feeVal)}원</div>
+        <div class="qty-name">🚚 택배비 ${escapeHtml(feeLabel)}</div>
         <div class="qty-rack"><span style="color:#9ca3af;">-</span></div>
         <div class="qty-price">${formatPrice(feeVal)}</div>
         <div style="text-align:center;font-size:11px;font-weight:700;">1</div>
-        <div class="qty-amount" style="display:flex;align-items:center;justify-content:flex-end;gap:6px;">
-          ${formatPrice(feeVal)}
-          <span class="fee-auto-tag">자동</span>
+        <div class="qty-amount" style="text-align:right;">
+          <span style="display:inline-flex;align-items:center;gap:2px;justify-content:flex-end;">
+            <input type="number" min="0" step="100" value="${feeVal}" data-feeedit="ship" title="택배비 — 필요하면 금액을 고칠 수 있습니다" style="width:82px;text-align:right;border:1.5px solid #fcd34d;border-radius:5px;padding:3px 6px;font-size:13px;background:#fffbeb;font-weight:700;color:#92400e;">원
+          </span>
+        </div>
+      </div>`;
+    }
+
+    // (v93) 박스비 행
+    if (boxVal > 0) {
+      totalAmount += boxVal;
+      html += `<div class="qty-row fee-row" style="background:#f0fdf4;">
+        <div class="qty-name">📦 박스비</div>
+        <div class="qty-rack"><span style="color:#9ca3af;">-</span></div>
+        <div class="qty-price">${formatPrice(boxVal)}</div>
+        <div style="text-align:center;font-size:11px;font-weight:700;">1</div>
+        <div class="qty-amount" style="text-align:right;">
+          <span style="display:inline-flex;align-items:center;gap:2px;justify-content:flex-end;">
+            <input type="number" min="0" step="1000" value="${boxVal}" data-feeedit="box" title="박스비 — 필요하면 금액을 고칠 수 있습니다" style="width:82px;text-align:right;border:1.5px solid #86efac;border-radius:5px;padding:3px 6px;font-size:13px;background:#f0fdf4;font-weight:700;color:#166534;">원
+          </span>
         </div>
       </div>`;
     }
@@ -30556,7 +30944,9 @@
     const labelParts = [];
     if (selectedParts.length > 0) labelParts.push('부품');
     if (pkgItems.length > 0) labelParts.push('포장재');
+    if (laborVal > 0) labelParts.push('공임비');
     if (feeVal > 0) labelParts.push('택배비');
+    if (boxVal > 0) labelParts.push('박스비');
     const totalLabel = labelParts.length > 1 ? `총 합계 (${labelParts.join('+')})` : '합계';
     html += `<div class="qty-total">
       <span class="total-label">${totalLabel}</span>
@@ -30565,6 +30955,19 @@
 
     partsQtyTableEl.innerHTML = html;
     partsQtyTableEl.classList.add('open');
+
+    // (v93) 공임비 / 택배비 / 박스비 금액 직접 수정
+    partsQtyTableEl.querySelectorAll('input[data-feeedit]').forEach(input => {
+      const commitFee = () => {
+        const kind = input.dataset.feeedit;
+        let v = parseInt(input.value);
+        if (isNaN(v) || v < 0) v = 0;
+        window._feeEdit[kind] = v;
+        if (typeof window.feeRenderForm === 'function') setTimeout(window.feeRenderForm, 0);
+      };
+      input.addEventListener('change', commitFee);
+      input.addEventListener('blur', commitFee);
+    });
 
     // (v26) 포장재(보호재/박스) 수량 컨트롤 — 부품과 동일하게 −/+/직접입력
     partsQtyTableEl.querySelectorAll('button[data-pkgaction]').forEach(btn => {
@@ -31518,6 +31921,7 @@
       intakeDate: intakeDateEl?.value || '',
       repairType: document.getElementById('repairType')?.value || '',
       deliveryFee: document.getElementById('deliveryFee')?.value || '',
+      ...window.feeCollectForm(),   // (v93) 공임비/택배비타입/박스비
       receiveType: document.getElementById('receiveType')?.value || '',
       treatmentContent: (document.getElementById('treatmentContent')?.value || '').trim(),
       // 필드명: 정식 접수와 동일하게 'notes' (입력 elem은 notesContent)
@@ -32137,6 +32541,8 @@
         repairType,
         // 택배비 / 수령방식 (해당 케이스만 값 있음)
         deliveryFee: deliveryFee ? parseInt(deliveryFee) : 0,
+        // (v93) 공임비 · 택배비 타입 · 박스비 분리 저장
+        ...window.feeCollectForm(),
         receiveType: receiveType || '',
         // 태그 (1단계는 모두 빈 배열로 시작)
         tags: {
@@ -32399,8 +32805,8 @@
     document.querySelectorAll('.toggle-btn[data-value]').forEach(b => b.classList.remove('active'));
 
     // 택배비 / 수령방식 / 안내박스 초기화
-    document.getElementById('deliveryFee').value = '';
     document.getElementById('receiveType').value = '';
+    window._feeClearForm();   // (v93) 택배비/박스비/공임비 초기화
     document.querySelectorAll('#deliveryFeeField .toggle-btn').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('#receiveTypeField .toggle-btn').forEach(b => b.classList.remove('active'));
     document.getElementById('deliveryFeeField').classList.remove('open');
