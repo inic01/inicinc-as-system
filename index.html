@@ -5199,7 +5199,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v93';
+  const APP_VERSION = 'v94';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -30519,7 +30519,14 @@
     if (Array.isArray(window._adminDefectPartMappings)) {
       window._adminDefectPartMappings.forEach(m => {
         if (m.active === false) return;
-        if (m.category !== category || m.product !== productName) return;
+        if (m.category !== category) return;
+        // (v94) 제품명이 글자까지 같아야 했던 조건 완화 — 불량부품 추천과 동일하게
+        //   같은 매칭그룹이면 인정한다. (예: '에어프라이어 16L 블랙'으로 등록된 매칭이
+        //   '에어프라이어 16L 화이트' 접수에서도 사용부품 추천으로 뜨도록)
+        //   기존엔 불량부품 칸엔 ★가 뜨는데 사용부품 칸만 안 뜨는 불일치가 있었음.
+        if (m.product !== productName) {
+          if (typeof isSameProductGroup !== 'function' || !isSameProductGroup(m.product, productName)) return;
+        }
         if (!selectedDefectNames.has(m.defectName)) return;
         if (Array.isArray(m.recommendedParts) || Array.isArray(m.usedParts)) {
           recommended.push(...(window.getMappingUsedParts ? window.getMappingUsedParts(m) : (m.recommendedParts || [])));
