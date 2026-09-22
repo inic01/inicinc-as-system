@@ -5199,7 +5199,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v96';
+  const APP_VERSION = 'v97';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -12856,6 +12856,7 @@
               <th style="width: 110px;">코드</th>
               <th>부품명</th>
               <th style="width: 100px; text-align: right;">단가</th>
+              <th style="width: 100px; text-align: center;">공임비</th>
               <th style="width: 140px;">렉 위치</th>
               <th style="width: 80px;">상태</th>
               <th style="width: 140px;">최근 수정</th>
@@ -12863,7 +12864,7 @@
             </tr>
           </thead>
           <tbody id="adminPartTbody">
-            <tr><td colspan="9" class="admin-loading">데이터 불러오는 중...</td></tr>
+            <tr><td colspan="10" class="admin-loading">데이터 불러오는 중...</td></tr>
           </tbody>
         </table>
       </div>
@@ -13023,7 +13024,7 @@
     const pageItems = items.slice(start, start + PARTS_PAGE_SIZE);
 
     if (total === 0) {
-      tbody.innerHTML = `<tr><td colspan="9" class="admin-table-empty">표시할 부품이 없습니다. [+ 신규 등록]으로 추가하세요.</td></tr>`;
+      tbody.innerHTML = `<tr><td colspan="10" class="admin-table-empty">표시할 부품이 없습니다. [+ 신규 등록]으로 추가하세요.</td></tr>`;
       if (pagWrap) pagWrap.innerHTML = '';
       return;
     }
@@ -13055,6 +13056,7 @@
           <td>${codeHtml}</td>
           <td><b>${escapeHtml(p.name || '-')}</b>${classBadge}</td>
           <td style="text-align:right;">${priceHtml}</td>
+          <td style="text-align:center;">${window.laborFeeBadge(p.laborFee)}</td>
           <td style="font-size:12px;">${rackHtml}</td>
           <td><span class="admin-badge ${isActive ? 'active' : 'inactive'}">${isActive ? '활성' : '비활성'}</span></td>
           <td style="font-size:11px;color:#6b7280;">${updatedAt}<br>${escapeHtml(updatedBy)}</td>
@@ -13200,6 +13202,17 @@
       </div>
 
       <div class="admin-form-field">
+        <label>공임비 <span style="font-size:11px;font-weight:400;color:var(--text-hint);margin-left:6px">(비워두면 기본 20,000원)</span></label>
+        <input type="number" id="adminFormPartLaborFee" min="0" step="500" placeholder="비워두면 20,000원"
+               value="${part && part.laborFee != null && part.laborFee !== '' ? Number(part.laborFee) : ''}" autocomplete="off">
+        <div class="field-hint">
+          💡 <b>작업 항목에만 입력</b>하세요. 일반 부품은 비워두면 됩니다.<br>
+          예) 납땜 작업 · 단순 작업 · 업데이트 작업 → <b>7500</b> / 무증상 → <b>0</b> (공임비 안 붙음)<br>
+          ※ 이 부품을 사용부품에 넣으면 공임비가 이 금액으로 바뀝니다. 여러 개면 <b>가장 낮은 금액</b>이 적용됩니다.
+        </div>
+      </div>
+
+      <div class="admin-form-field">
         <label>렉 위치</label>
         ${(() => {
           const activeRacks = (window._adminRacks || []).filter(r => r.active !== false);
@@ -13296,6 +13309,10 @@
     ).map(b => b.dataset.pc);
     const priceRaw = (document.getElementById('adminFormPartPrice')?.value || '').replace(/[^\d]/g, '');
     const price = priceRaw ? Number(priceRaw) : 0;
+    // (v97) 공임비 — 빈칸이면 null(미설정 → 기본 20,000원)
+    const partLaborRaw = document.getElementById('adminFormPartLaborFee')?.value;
+    const laborFee = (partLaborRaw === '' || partLaborRaw == null || isNaN(Number(partLaborRaw)))
+      ? null : Math.max(0, Math.round(Number(partLaborRaw)));
     const rack = document.getElementById('adminFormPartRack')?.value?.trim() || '';
 
     if (!category) {
@@ -13348,14 +13365,14 @@
     if (docId) {
       const before = window._adminParts.find(p => p.id === docId);
       await updateDoc(doc(db, 'parts', docId), {
-        category, group: finalGroup, code, name, price, rack, partClasses,
+        category, group: finalGroup, code, name, price, rack, partClasses, laborFee,
         updatedAt: now, updatedBy: user
       });
-      await adminLogHistory('parts', docId, 'update', before, { category, group: finalGroup, code, name, price, rack, partClasses });
+      await adminLogHistory('parts', docId, 'update', before, { category, group: finalGroup, code, name, price, rack, partClasses, laborFee });
       showToast(`"${name}" 수정 완료`, 'success');
     } else {
       const newDoc = await addDoc(collection(db, 'parts'), {
-        category, group: finalGroup, code, name, price, rack, partClasses,
+        category, group: finalGroup, code, name, price, rack, partClasses, laborFee,
         active: true,
         createdAt: now, updatedAt: now,
         createdBy: user, updatedBy: user
@@ -16871,6 +16888,12 @@
         { key: 'code',     label: '부품코드', format: v => v || '' },
         { key: 'name',     label: '부품명' },
         { key: 'price',    label: '단가', parse: v => Number(v) || 0, format: v => v ?? 0 },
+        // (v97) 공임비 — 비우면 기본 20,000원, 0을 넣으면 공임비 안 붙음 (작업 항목에만 입력)
+        { key: 'laborFee', label: '공임비(비우면 기본20000)',
+          parse: v => { const t = String(v == null ? '' : v).replace(/[^0-9-]/g, '').trim();
+                        if (t === '') return null;
+                        const n = Number(t); return isNaN(n) ? null : Math.max(0, Math.round(n)); },
+          format: v => (v === null || v === undefined || v === '' || isNaN(Number(v))) ? '' : Number(v) },
         { key: 'rack',     label: '렉위치' },
         { key: 'partClasses', label: '분류(자재/구성품,복수가능)',
           // (v24) 엑셀로 분류 일괄 지정. "자재", "구성품", "자재,구성품"(복수) 등 입력 가능. 빈칸이면 자재.
@@ -29695,12 +29718,41 @@
     return out;
   };
 
-  // (v96) 공임비가 '정해진' 근거들을 모두 모은다 (불량명 + 사용부품 작업항목)
+  // (v97) 부품 마스터에 직접 지정된 공임비 (부품 관리 → 공임비 칸)
+  //   비어 있으면 '미설정' — 아래 키워드 규칙이나 기본 20,000원이 적용된다
+  window.laborFeeFromPartMaster = function(parts) {
+    const out = [];
+    const list = Array.isArray(parts) ? parts : [];
+    const master = Array.isArray(window._adminParts) ? window._adminParts : [];
+    list.forEach(function(p) {
+      if (!p) return;
+      let v = p.laborFee;
+      if (v === null || v === undefined || v === '') {
+        const m = master.find(function(x) {
+          if (!x || x.active === false) return false;
+          if (p.code && x.code && String(x.code) === String(p.code)) return true;
+          return x.name === (p.name || p.partName);
+        });
+        v = m ? m.laborFee : undefined;
+      }
+      if (v === null || v === undefined || v === '' || isNaN(Number(v))) return;  // 미설정
+      out.push({ from: '사용부품', label: (p.name || p.partName || ''), fee: Number(v) });
+    });
+    return out;
+  };
+
+  // (v96) 공임비가 '정해진' 근거들을 모두 모은다 (불량명 + 사용부품)
   window.laborFeeCandidates = function() {
     const out = window.laborFeeFromDefects();
     const parts = (typeof window._formGetSelectedParts === 'function') ? window._formGetSelectedParts() : [];
-    const rule = window.laborFeeRuleFromParts(parts);
-    if (rule) out.push({ from: '사용부품', label: rule.keyword, fee: Number(rule.fee) || 0, name: rule.name });
+    // (v97) ① 부품 마스터에 직접 지정된 공임비가 있으면 그것을 쓴다
+    const fromMaster = window.laborFeeFromPartMaster(parts);
+    fromMaster.forEach(function(x) { out.push(x); });
+    // ② 지정된 게 하나도 없을 때만 이름 키워드 규칙을 쓴다 (예전 방식 — 데이터 채우면 자연히 안 쓰임)
+    if (fromMaster.length === 0) {
+      const rule = window.laborFeeRuleFromParts(parts);
+      if (rule) out.push({ from: '사용부품', label: rule.keyword, fee: Number(rule.fee) || 0, name: rule.name });
+    }
     return out;
   };
 
@@ -30878,6 +30930,7 @@
       name: p.name || '',
       price: parseInt(p.price) || 0,
       qty: parseInt(p.qty) || 1,
+      ...(p.laborFee != null && p.laborFee !== '' && !isNaN(p.laborFee) ? { laborFee: Number(p.laborFee) } : {}),
     }));
     renderPartsTags();
     renderQtyTable();
