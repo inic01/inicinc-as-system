@@ -32435,17 +32435,24 @@
   };
 
   // ==================== 폼 제출 ====================
-  // (v89) [🖨️ 수리내역 출력] — 무상·방문AS 무상 전용
+  // (v89) [🖨️ 수리내역 출력] — 무상·방문AS 무상은 '출력 = 완료'
+  // (v98) 유상·방문AS 유상도 출력 가능 — 단 '출력 + 평소대로 접수'(해피콜로 진행, 완료 아님)
   //   팝업 차단을 피하려고 클릭 순간 빈 창을 먼저 연 뒤, 저장이 끝나면 그 창에 내역서를 그린다.
   //   저장이 실패하거나 입력이 빠져 등록이 안 되면 창을 닫는다.
   // 확인창 (굵은 글씨를 쓰려고 브라우저 기본 confirm 대신 직접 그림)
-  function _printConfirm() {
+  function _printConfirm(isPaid) {
+    // (v98) 유상은 완료 처리가 아니라 평소대로 접수된다 — 문구를 다르게
+    const msg = isPaid
+      ? '접수를 등록하고 <b style="font-size:16.5px;font-weight:800;">수리내역서를 출력</b>합니다.<br><br>'
+        + '유상 건이므로 <b style="font-size:16.5px;font-weight:800;">완료 처리되지 않습니다.</b> '
+        + '평소처럼 <b style="font-size:16.5px;font-weight:800;">해피콜</b>로 넘어갑니다.'
+      : '수리내역서를 출력 시 <b style="font-size:16.5px;font-weight:800;">완료</b>로 처리됩니다.<br><br>'
+        + '만약 고객에게 안내가 필요한 건이면 <b style="font-size:16.5px;font-weight:800;">취소</b> 후 <b style="font-size:16.5px;font-weight:800;">접수 등록하기</b>로 접수해주세요.';
     return new Promise(resolve => {
       const ov = document.createElement('div');
       ov.style.cssText = 'position:fixed;inset:0;z-index:99980;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;padding:16px;';
       ov.innerHTML = '<div style="background:#fff;border-radius:14px;max-width:440px;width:100%;padding:22px 22px 18px;box-shadow:0 20px 50px rgba(0,0,0,.3);">'
-        + '<p style="margin:0 0 18px;font-size:14.5px;line-height:1.75;color:#111827;">수리내역서를 출력 시 <b style="font-size:16.5px;font-weight:800;">완료</b>로 처리됩니다.<br><br>'
-        + '만약 고객에게 안내가 필요한 건이면 <b style="font-size:16.5px;font-weight:800;">취소</b> 후 <b style="font-size:16.5px;font-weight:800;">접수 등록하기</b>로 접수해주세요.</p>'
+        + '<p style="margin:0 0 18px;font-size:14.5px;line-height:1.75;color:#111827;">' + msg + '</p>'
         + '<div style="display:flex;gap:8px;justify-content:flex-end;">'
         + '<button type="button" data-a="no" style="padding:10px 18px;border-radius:8px;border:1px solid #e5e7eb;background:#fff;font-weight:700;font-size:14px;cursor:pointer;font-family:inherit;">취소</button>'
         + '<button type="button" data-a="ok" style="padding:10px 18px;border-radius:8px;border:none;background:#0f766e;color:#fff;font-weight:700;font-size:14px;cursor:pointer;font-family:inherit;">수리내역 출력</button>'
@@ -32461,11 +32468,13 @@
   window.submitFormPrint = async function() {
     if (window._submitPrintMode) return; // 이미 진행 중
     const rt = (document.getElementById('repairType') || {}).value || '';
-    if (!(rt === '무상' || rt === '방문AS 무상')) {
-      showToast('수리내역 출력은 무상·방문AS 무상 건만 가능합니다', 'error');
+    // (v98) 유상도 출력 가능 — 단, 유상은 완료 처리 없이 평소 접수 흐름 그대로
+    const _isPaid = rt.includes('유상');
+    if (!(rt === '무상' || rt === '방문AS 무상' || _isPaid)) {
+      showToast('수리내역 출력은 무상·유상 AS 건만 가능합니다 (확인요청 제외)', 'error');
       return;
     }
-    if (!(await _printConfirm())) return;
+    if (!(await _printConfirm(_isPaid))) return;
     const pbtn = document.getElementById('printSubmitBtn');
     if (pbtn) pbtn.disabled = true;
     window._submitPrintMode = true;
@@ -32481,14 +32490,15 @@
     if (done) window.dashPrintRepairReport(done); // 저장 성공한 경우에만 내역서 표시
   };
 
-  // 출력 버튼 표시: [접수 등록하기]가 보이고, 수리유형이 무상 계열일 때만
+  // 출력 버튼 표시: [접수 등록하기]가 보이고, 수리유형이 무상·유상일 때 (확인요청은 제외)
+  //   (v98) 유상 추가 — 무상은 '출력 = 완료', 유상은 '출력 + 평소대로 접수'
   window.updatePrintSubmitBtn = function() {
     const pbtn = document.getElementById('printSubmitBtn');
     const sbtn = document.getElementById('submitBtn');
     if (!pbtn || !sbtn) return;
     const rt = (document.getElementById('repairType') || {}).value || '';
-    const free = (rt === '무상' || rt === '방문AS 무상');
-    pbtn.hidden = !(free && sbtn.style.display !== 'none' && !window._editModeCaseId);
+    const canPrint = (rt === '무상' || rt === '방문AS 무상' || rt.includes('유상'));
+    pbtn.hidden = !(canPrint && sbtn.style.display !== 'none' && !window._editModeCaseId);
   };
   try {
     const _sb = document.getElementById('submitBtn');
@@ -32735,6 +32745,8 @@
 
       // (v89) [🖨️ 수리내역 출력] — 무상 건은 수리내역서를 출력하고 해피콜 없이 바로 완료
       const _printComplete = (window._submitPrintMode === true) && !isPaidType && repairType !== '확인요청';
+      // (v98) 유상은 수리내역서만 출력하고 stage·완료 처리는 손대지 않는다 — 평소 접수 흐름 그대로
+      const _printPaidOnly = (window._submitPrintMode === true) && isPaidType && repairType !== '확인요청';
       if (_printComplete && !isDirectReceive) {
         stage = '해피콜완료';
         actionStatus = [];
@@ -32898,6 +32910,13 @@
         }
       }
 
+      // (v98) 유상 — 출력 기록만 남기고 stage·완료 관련 필드는 건드리지 않는다
+      if (_printPaidOnly) {
+        caseData.repairReportPrinted = true;
+        caseData.repairReportPrintedAt = serverTimestamp();
+        caseData.repairReportPrintedBy = NAS_USER || '엔지니어';
+      }
+
       if (_printComplete) {
         caseData.repairReportPrinted = true;
         caseData.repairReportPrintedAt = serverTimestamp();
@@ -32942,7 +32961,7 @@
         } catch (e) { console.warn('AS 접수 - 재고 차감 실패:', e); }
       }
 
-      if (_printComplete) window._lastPrintSubmit = { ...caseData, id: caseId, _docId: caseId };
+      if (_printComplete || _printPaidOnly) window._lastPrintSubmit = { ...caseData, id: caseId, _docId: caseId };
 
       // 성공 화면 전환
       newCaseIdEl.textContent = caseId;
@@ -32955,6 +32974,8 @@
       // 자동 ERP완료 케이스는 메시지에 표시
       if (_printComplete) {
         showToast('접수 완료 — 수리내역서 출력 → 완료', 'success');
+      } else if (_printPaidOnly) {
+        showToast('접수 등록 — 수리내역서 출력 (유상: 완료 처리 안 됨, 해피콜로 진행)', 'success');
       } else if (erpProcessed) {
         showToast('접수 완료 (직접수령 → 자동 해피콜완료)', 'success');
       } else {
