@@ -5199,7 +5199,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v94';
+  const APP_VERSION = 'v96';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -12377,7 +12377,7 @@
               <th style="width: 130px;">카테고리</th>
               <th style="width: 160px;">제품</th>
               <th>불량명</th>
-              <th style="width: 110px; text-align: center;">공임 등급</th>
+              <th style="width: 110px; text-align: center;">공임비</th>
               <th style="width: 70px; text-align: center;">순서</th>
               <th style="width: 80px;">상태</th>
               <th style="width: 150px;">최근 수정</th>
@@ -12493,12 +12493,14 @@
   }
 
   // 테이블 렌더링
-  // (v91) 공임 등급 배지 — A: 30분 이내 / B: 30~60분
-  window.LABOR_GRADE_LABEL = { A: 'A · 30분 이내', B: 'B · 30~60분' };
-  window.laborGradeBadge = function(g) {
-    if (g === 'A') return '<span style="background:#dcece9;color:#0f766e;padding:2px 9px;border-radius:99px;font-size:11.5px;font-weight:800;">A</span>';
-    if (g === 'B') return '<span style="background:#fdf4e3;color:#8a5a12;padding:2px 9px;border-radius:99px;font-size:11.5px;font-weight:800;">B</span>';
-    return '<span style="background:#f3f4f6;color:#9ca3af;padding:2px 9px;border-radius:99px;font-size:11.5px;font-weight:700;">없음</span>';
+  // (v96) 불량명별 공임비 배지 — 비어 있으면 '기본'(20,000원), 0이면 '없음'
+  window.laborFeeBadge = function(v) {
+    if (v === null || v === undefined || v === '' || isNaN(Number(v))) {
+      return '<span style="background:#f3f4f6;color:#9ca3af;padding:2px 9px;border-radius:99px;font-size:11.5px;font-weight:700;">기본</span>';
+    }
+    const n = Number(v);
+    if (n === 0) return '<span style="background:#dcece9;color:#0f766e;padding:2px 9px;border-radius:99px;font-size:11.5px;font-weight:800;">없음</span>';
+    return '<span style="background:#eef2ff;color:#3730a3;padding:2px 9px;border-radius:99px;font-size:11.5px;font-weight:800;">' + n.toLocaleString() + '원</span>';
   };
 
   window.adminRenderDefectTable = function() {
@@ -12562,7 +12564,7 @@
           <td>${categoryBadge}</td>
           <td>${isCommon ? '<span style="color:#9ca3af;font-size:12px;">(공통)</span>' : escapeHtml(d.product || '-')}</td>
           <td><b>${escapeHtml(d.name || '-')}</b></td>
-          <td style="text-align:center;">${window.laborGradeBadge(d.laborGrade)}</td>
+          <td style="text-align:center;">${window.laborFeeBadge(d.laborFee)}</td>
           <td style="text-align:center;font-variant-numeric: tabular-nums;">${orderVal}</td>
           <td><span class="admin-badge ${isActive ? 'active' : 'inactive'}">${isActive ? '활성' : '비활성'}</span></td>
           <td style="font-size:11px;color:#6b7280;">${updatedAt}<br>${escapeHtml(updatedBy)}</td>
@@ -12623,13 +12625,14 @@
       </div>
 
       <div class="admin-form-field">
-        <label>공임 등급</label>
-        <select id="adminFormDefectLaborGrade">
-          <option value="A" ${defect && defect.laborGrade === 'A' ? 'selected' : ''}>A · 30분 이내</option>
-          <option value="B" ${defect && defect.laborGrade === 'B' ? 'selected' : ''}>B · 30~60분</option>
-          <option value="없음" ${!defect || !(defect.laborGrade === 'A' || defect.laborGrade === 'B') ? 'selected' : ''}>없음 (공임비 안 붙음)</option>
-        </select>
-        <div class="field-hint">접수 건의 공임비는 <b>첫 번째 불량명</b>의 등급으로 정해집니다. 금액은 부품 관리의 "공임비 A/B" 단가를 씁니다.</div>
+        <label>공임비 <span style="font-size:11px;font-weight:400;color:var(--text-hint);margin-left:6px">(비워두면 기본 20,000원)</span></label>
+        <input type="number" id="adminFormDefectLaborFee" min="0" step="500" placeholder="비워두면 20,000원"
+               value="${defect && defect.laborFee != null && defect.laborFee !== '' ? Number(defect.laborFee) : ''}" autocomplete="off">
+        <div class="field-hint">
+          💡 <b>예외만 입력</b>하세요. 비워두면 유상 건에 기본 <b>20,000원</b>이 붙습니다.<br>
+          예) 무증상 · 배터리불량처럼 작업이 없는 불량명은 <b>0</b>을 입력하면 공임비가 안 붙습니다.<br>
+          ※ 불량명을 여러 개 고르면 <b>그중 가장 낮은 금액</b>이 적용됩니다. 접수 화면에서 금액은 언제든 고칠 수 있습니다.
+        </div>
       </div>
 
       <div class="admin-form-field">
@@ -12692,8 +12695,10 @@
     const category = document.getElementById('adminFormDefectCategory')?.value?.trim();
     const product = document.getElementById('adminFormDefectProduct')?.value?.trim();
     const name = document.getElementById('adminFormDefectName')?.value?.trim();
-    const laborGradeRaw = document.getElementById('adminFormDefectLaborGrade')?.value || '';
-    const laborGrade = (laborGradeRaw === 'A' || laborGradeRaw === 'B') ? laborGradeRaw : '없음';
+    // (v96) 공임비 — 빈칸이면 null(미설정 → 기본 20,000원)
+    const laborFeeRaw = document.getElementById('adminFormDefectLaborFee')?.value;
+    const laborFee = (laborFeeRaw === '' || laborFeeRaw == null || isNaN(Number(laborFeeRaw)))
+      ? null : Math.max(0, Math.round(Number(laborFeeRaw)));
     const orderRaw = document.getElementById('adminFormDefectOrder')?.value?.trim();
     const order = orderRaw ? Number(orderRaw) : 100;
 
@@ -12742,14 +12747,14 @@
     if (docId) {
       const before = window._adminDefects.find(d => d.id === docId);
       await updateDoc(doc(db, 'defects', docId), {
-        category, product: finalProduct, name, order, laborGrade,
+        category, product: finalProduct, name, order, laborFee,
         updatedAt: now, updatedBy: user
       });
-      await adminLogHistory('defects', docId, 'update', before, { category, product: finalProduct, name, order, laborGrade });
+      await adminLogHistory('defects', docId, 'update', before, { category, product: finalProduct, name, order, laborFee });
       showToast(`"${name}" 수정 완료`, 'success');
     } else {
       const newDoc = await addDoc(collection(db, 'defects'), {
-        category, product: finalProduct, name, order, laborGrade,
+        category, product: finalProduct, name, order, laborFee,
         active: true,
         createdAt: now, updatedAt: now,
         createdBy: user, updatedBy: user
@@ -16838,18 +16843,21 @@
         { key: 'category', label: '카테고리' },
         { key: 'product',  label: '제품' },
         { key: 'name',     label: '불량명' },
-        // (v91) 공임 등급 — A: 30분 이내 / B: 30~60분 / 빈칸: 공임비 없음
-        { key: 'laborGrade', label: '공임등급(A/B/없음)',
-          // A: 30분 이내 / B: 30~60분 / 없음: 공임비 안 붙음 (빈칸도 '없음'으로 본다)
-          parse: v => { const t = String(v == null ? '' : v).trim().toUpperCase(); return (t === 'A' || t === 'B') ? t : '없음'; },
-          format: v => (v === 'A' || v === 'B') ? v : '없음' },
+        // (v96) 공임비 — 비우면 기본 20,000원, 0을 넣으면 공임비 안 붙음
+        { key: 'laborFee', label: '공임비(비우면 기본20000)',
+          parse: v => { const t = String(v == null ? '' : v).replace(/[^0-9-]/g, '').trim();
+                        if (t === '') return null;
+                        const n = Number(t); return isNaN(n) ? null : Math.max(0, Math.round(n)); },
+          format: v => (v === null || v === undefined || v === '' || isNaN(Number(v))) ? '' : Number(v) },
         { key: 'order',    label: '표시순서', parse: v => Number(v) || 0, format: v => v ?? '' },
         { key: 'active',   label: '상태(활성=Y)', parse: v => String(v).toUpperCase() !== 'N', format: v => v === false ? 'N' : 'Y' }
       ],
       naturalKey: ['category', 'product', 'name'],
       validate: (row) => {
         if (!row.category || !row.name) return '카테고리와 불량명은 필수';
-        if (!['A', 'B', '없음'].includes(row.laborGrade)) return '공임등급은 A · B · 없음 중 하나';
+        if (row.laborFee !== null && row.laborFee !== undefined && (isNaN(Number(row.laborFee)) || Number(row.laborFee) < 0)) {
+          return '공임비는 0 이상 숫자이거나 빈칸';
+        }
         return null;
       }
     },
@@ -20470,7 +20478,7 @@
                   <td style="text-align:right;font-weight:600;">${(isFreeRepair ? 0 : (p.amount || 0)).toLocaleString()}원</td>
                 </tr>
               `).join('')}
-              ${laborFeeVal > 0 ? _feeRow('labor', '🛠️', escapeHtml(window.LABOR_FEE_NAME), laborFeeVal, '#eef2ff', '#3730a3') : ''}
+              ${laborFeeVal > 0 ? _feeRow('labor', '🛠️', escapeHtml(c.laborFeeName || window.LABOR_FEE_NAME), laborFeeVal, '#eef2ff', '#3730a3') : ''}
               ${deliveryFeeVal > 0 ? _feeRow('ship', '🚚', escapeHtml(window._shipFeeLabel(c)), deliveryFeeVal, '#fff8eb', '#92400e') : ''}
               ${boxFeeVal > 0 ? _feeRow('box', '📦', '박스비', boxFeeVal, '#f0fdf4', '#166534') : ''}
             </tbody>
@@ -23081,7 +23089,7 @@
         _partSeq++;
         fields.push({
           label: `사용부품${_partSeq}`,
-          value: window.LABOR_FEE_NAME,
+          value: c.laborFeeName || window.LABOR_FEE_NAME,   // (v95)
           qty: 1,
           mono: false,
           multiline: false
@@ -29410,6 +29418,8 @@
   function updatePickerDisplay(type, defectNum) {
     const state = window._defectPickState[defectNum];
     if (!state) return;
+    // (v96) 불량명이 바뀌면 공임비 기본값이 달라질 수 있으므로 금액표를 다시 그린다
+    if (type === 'name') setTimeout(function() { if (typeof renderQtyTable === 'function') renderQtyTable(); }, 0);
 
     if (type === 'name') {
       const input = document.getElementById(`defect${defectNum}Name`);
@@ -29628,6 +29638,104 @@
   window.LABOR_FEE_CODE = '작업-10';
 
   // ──────────────────────────────────────────────────────────
+  // (v95) 사용부품에 '작업 항목'이 들어가면 공임비가 그 금액으로 바뀐다
+  //   예) 사용부품에 '단순작업' 또는 '업데이트작업'을 넣으면 공임비 7,500원
+  //   - keyword: 부품명에 이 글자가 들어 있으면 해당 (공백 무시)
+  //   - fee    : 그때의 공임비
+  //   - name   : ERP 전산작업·카드·수리내역서에 표시될 공임비 줄 이름
+  //   여러 개가 걸리면 가장 낮은 금액을 쓴다.
+  //   해당 없으면 기본 20,000원.
+  // ──────────────────────────────────────────────────────────
+  window.LABOR_FEE_PART_RULES = [
+    { keyword: '단순작업',    fee: 7500, name: '공임비 A' },
+    { keyword: '업데이트작업', fee: 7500, name: '공임비 A' }
+  ];
+
+  // 선택된 사용부품 목록에서 적용될 규칙을 찾는다 (없으면 null)
+  window.laborFeeRuleFromParts = function(parts) {
+    const list = Array.isArray(parts) ? parts : [];
+    const rules = Array.isArray(window.LABOR_FEE_PART_RULES) ? window.LABOR_FEE_PART_RULES : [];
+    let hit = null;
+    list.forEach(function(p) {
+      const nm = String((p && (p.name || p.partName)) || '').replace(/\s+/g, '');
+      if (!nm) return;
+      rules.forEach(function(rule) {
+        const k = String(rule && rule.keyword || '').replace(/\s+/g, '');
+        if (!k || nm.indexOf(k) < 0) return;
+        if (hit == null || Number(rule.fee) < Number(hit.fee)) hit = rule;
+      });
+    });
+    return hit;
+  };
+
+  // (v96) 선택된 불량명에 등록된 공임비 찾기
+  //   불량명 마스터(defects)의 laborFee 가 비어 있으면 '미설정' — 기본 20,000원이 적용된다
+  window.laborFeeFromDefects = function() {
+    const out = [];
+    const defs = Array.isArray(window._adminDefects) ? window._adminDefects : [];
+    if (defs.length === 0) return out;
+    const cat = (document.getElementById('productCategory') || {}).value || '';
+    const prod = (document.getElementById('productName') || {}).value || '';
+    for (let n = 1; n <= 5; n++) {
+      const nm = window._defectPickState && window._defectPickState[n] && window._defectPickState[n].name;
+      if (!nm) continue;
+      const hit = defs.find(function(d) {
+        if (!d || d.active === false || d.name !== nm) return false;
+        if (d.category && cat && d.category !== cat) return false;
+        if (d.product && prod && d.product !== prod) {
+          if (!(window.isSameProductGroup && window.isSameProductGroup(d.product, prod))) return false;
+        }
+        return true;
+      });
+      if (!hit) continue;
+      const v = hit.laborFee;
+      if (v === null || v === undefined || v === '' || isNaN(Number(v))) continue;  // 미설정
+      out.push({ from: '불량명', label: nm, fee: Number(v) });
+    }
+    return out;
+  };
+
+  // (v96) 공임비가 '정해진' 근거들을 모두 모은다 (불량명 + 사용부품 작업항목)
+  window.laborFeeCandidates = function() {
+    const out = window.laborFeeFromDefects();
+    const parts = (typeof window._formGetSelectedParts === 'function') ? window._formGetSelectedParts() : [];
+    const rule = window.laborFeeRuleFromParts(parts);
+    if (rule) out.push({ from: '사용부품', label: rule.keyword, fee: Number(rule.fee) || 0, name: rule.name });
+    return out;
+  };
+
+  // 여러 개가 정해져 있으면 가장 낮은 금액을 쓴다. 아무것도 없으면 null.
+  window.laborFeePick = function() {
+    const c = window.laborFeeCandidates();
+    if (c.length === 0) return null;
+    return c.reduce(function(a, b) { return (Number(b.fee) < Number(a.fee)) ? b : a; });
+  };
+
+  // 지금 폼 기준 공임비 기본값 / 줄 이름
+  window.laborFeeBase = function() {
+    const p = window.laborFeePick();
+    return p ? (Number(p.fee) || 0) : window.LABOR_FEE_DEFAULT;
+  };
+  window.laborFeeNameNow = function() {
+    const p = window.laborFeePick();
+    return (p && p.name) ? p.name : window.LABOR_FEE_NAME;
+  };
+
+  // 사용부품이 바뀔 때마다 공임비 숨은값을 다시 맞춘다
+  //   ※ 여기서 renderQtyTable / feeRenderForm 을 부르면 무한루프가 되므로 부르지 않는다
+  window._syncLaborFeeFromParts = function() {
+    const el = document.getElementById('laborFee');
+    if (!el) return 0;
+    const rt = (document.getElementById('repairType') || {}).value || '';
+    if (String(rt).indexOf('유상') < 0) { el.value = ''; return 0; }
+    const v = (window._feeEdit && window._feeEdit.labor != null)
+      ? window._feeEdit.labor
+      : window.laborFeeBase();
+    el.value = v || '';
+    return v;
+  };
+
+  // ──────────────────────────────────────────────────────────
   // (v93) 무상 AS 택배비 스위치  — 9/21 조유림 조장 결정
   //   true  = 일반 '무상' 건에도 택배비 타입(A~F·S)을 물어본다.
   //           1회 무상 수리처럼 수리비·공임비는 무료지만 택배비는 받아야 하는
@@ -29681,8 +29789,9 @@
     field.classList.toggle('open', !!r.show);
 
     // --- 공임비 (유상이면 항상. 택배비 영역 노출 여부와 무관) ---
+    //   (v95) 사용부품에 '단순작업' 등 작업 항목이 있으면 기본값이 그 금액으로 바뀐다
     const labor = r.isPaid
-      ? (window._feeEdit.labor != null ? window._feeEdit.labor : window.LABOR_FEE_DEFAULT)
+      ? (window._feeEdit.labor != null ? window._feeEdit.labor : window.laborFeeBase())
       : 0;
     _feeSet('laborFee', labor || '');
 
@@ -29823,7 +29932,8 @@
       altShip: _feeGet('altShip') === '1',
       boxFeeSel: _feeGet('boxFeeSel') || '',
       boxFee: parseInt(_feeGet('boxFee')) || 0,
-      laborFee: parseInt(_feeGet('laborFee')) || 0
+      laborFee: parseInt(_feeGet('laborFee')) || 0,
+      laborFeeName: (typeof window.laborFeeNameNow === 'function') ? window.laborFeeNameNow() : window.LABOR_FEE_NAME
     };
   };
 
@@ -30800,6 +30910,8 @@
   };
 
   function renderQtyTable() {
+    // (v95) 사용부품에 작업 항목(단순작업 등)이 들어가면 공임비 기본값이 달라진다
+    if (typeof window._syncLaborFeeFromParts === 'function') window._syncLaborFeeFromParts();
     // (v93) 택배비 / 박스비 / 공임비 — 각각 별도 금액
     const feeVal = parseInt(document.getElementById('deliveryFee')?.value || '0') || 0;
     const boxVal = parseInt(document.getElementById('boxFee')?.value || '0') || 0;
@@ -30900,17 +31012,23 @@
     // (v93) 공임비 행 — 유상 건 자동 추가. 줄 삭제 불가, 금액만 수정 가능.
     if (laborVal > 0 || _rulesNow.isPaid) {
       totalAmount += laborVal;
-      const _laborEdited = (laborVal !== window.LABOR_FEE_DEFAULT);
+      // (v95) 작업 항목에 따라 기본 금액·이름이 달라진다
+      const _laborBase = window.laborFeeBase();
+      const _laborName = window.laborFeeNameNow();
+      const _laborRule = window.laborFeeRuleFromParts(
+        (typeof window._formGetSelectedParts === 'function') ? window._formGetSelectedParts() : []
+      );
+      const _laborEdited = (laborVal !== _laborBase);
       html += `<div class="qty-row fee-row" style="background:#eef2ff;">
-        <div class="qty-name">🛠️ ${escapeHtml(window.LABOR_FEE_NAME)} <span style="font-size:10px;color:#6366f1;font-weight:700;">자동</span></div>
+        <div class="qty-name">🛠️ ${escapeHtml(_laborName)} <span style="font-size:10px;color:#6366f1;font-weight:700;">자동</span>${_laborRule ? `<span style="font-size:10px;color:#0f766e;font-weight:700;margin-left:4px;">${escapeHtml(_laborRule.keyword)}</span>` : ''}</div>
         <div class="qty-rack"><span style="color:#9ca3af;">-</span></div>
-        <div class="qty-price">${formatPrice(window.LABOR_FEE_DEFAULT)}</div>
+        <div class="qty-price">${formatPrice(_laborBase)}</div>
         <div style="text-align:center;font-size:11px;font-weight:700;">1</div>
         <div class="qty-amount" style="text-align:right;">
           <span style="display:inline-flex;align-items:center;gap:2px;justify-content:flex-end;">
             <input type="number" min="0" step="1000" value="${laborVal}" data-feeedit="labor" title="공임비 — 금액만 수정할 수 있습니다 (줄 삭제 불가)" style="width:82px;text-align:right;border:1.5px solid ${_laborEdited ? '#f59e0b' : '#c7d2fe'};border-radius:5px;padding:3px 6px;font-size:13px;${_laborEdited ? 'background:#fffbeb;font-weight:700;color:#b45309;' : 'background:#fff;font-weight:700;color:#3730a3;'}">원
           </span>
-          ${_laborEdited ? `<div style="font-size:10px;color:#b45309;">기본 ${formatPrice(window.LABOR_FEE_DEFAULT)}원 → 청구 ${formatPrice(laborVal)}원</div>` : ''}
+          ${_laborEdited ? `<div style="font-size:10px;color:#b45309;">기본 ${formatPrice(_laborBase)}원 → 청구 ${formatPrice(laborVal)}원</div>` : ''}
         </div>
       </div>`;
     }
