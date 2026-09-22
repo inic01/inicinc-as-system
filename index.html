@@ -5199,7 +5199,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v97';
+  const APP_VERSION = 'v98';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -26280,6 +26280,14 @@
         card.addEventListener('click', () => {
           if (typeof window.dashOpenModal === 'function') window.dashOpenModal(docId);
         });
+        // (v98) [🖨️ 수리내역서] — 카드 클릭(상세 모달)과 겹치지 않게 전파를 막는다
+        const printBtn = card.querySelector('[data-print-report]');
+        if (printBtn) {
+          printBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            window.completedPrintReport(docId);
+          });
+        }
       }
     });
 
@@ -26340,10 +26348,34 @@
           <div style="font-weight:600;color:#374151;">${escapeHtml(completedTime || '')}</div>
           <div style="font-size:10px;">완료일시</div>
         </div>
+        ${isAS ? `<button type="button" data-print-report="${escapeHtml(docId)}" title="고객에게 줄 수리내역서를 다시 출력합니다" style="flex-shrink:0;padding:8px 12px;background:#fff;color:#0f766e;border:1px solid #99c6c0;border-radius:8px;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;">🖨️ 수리내역서</button>` : ''}
         <div style="flex-shrink:0;color:#9ca3af;font-size:18px;">›</div>
       </div>
     `;
   }
+
+  // ============================================================
+  // (v98) 완료 접수내역 → 수리내역서 다시 출력
+  //   · 유상·무상 상관없이 완료된 AS 건이면 언제든 다시 뽑을 수 있다
+  //   · 접수 화면의 [🖨️ 수리내역 출력]과 달리 상태(완료 처리)는 건드리지 않는다 — 출력만
+  // ============================================================
+  window.completedPrintReport = function(docId) {
+    const list = Array.isArray(window._completedListData) ? window._completedListData : [];
+    let c = list.find(x => (x._docId || x.id) === docId);
+    if (!c) c = list.find(x => x.id === docId);
+    if (!c && Array.isArray(window.dashAllCases)) {
+      c = window.dashAllCases.find(x => (x._docId || x.id) === docId);
+    }
+    if (!c) {
+      showToast('접수 정보를 찾을 수 없습니다 (새로고침 후 다시 시도하세요)', 'error');
+      return;
+    }
+    if (typeof window.dashPrintRepairReport !== 'function') {
+      showToast('수리내역서 기능을 불러오지 못했습니다', 'error');
+      return;
+    }
+    window.dashPrintRepairReport(c);
+  };
 
   // 디바운스 헬퍼
   function _completedDebounce(fn, delay) {
