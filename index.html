@@ -5199,7 +5199,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v98';
+  const APP_VERSION = 'v99';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -12631,7 +12631,9 @@
         <div class="field-hint">
           💡 <b>예외만 입력</b>하세요. 비워두면 유상 건에 기본 <b>20,000원</b>이 붙습니다.<br>
           예) 무증상 · 배터리불량처럼 작업이 없는 불량명은 <b>0</b>을 입력하면 공임비가 안 붙습니다.<br>
-          ※ 불량명을 여러 개 고르면 <b>그중 가장 낮은 금액</b>이 적용됩니다. 접수 화면에서 금액은 언제든 고칠 수 있습니다.
+          예) <b>A등급</b>은 비워두거나 20000, <b>B등급</b>(30~60분 작업)은 <b>30000</b>을 넣으세요.<br>
+          ※ (v99) 불량명을 여러 개 고르면 <b>그중 가장 높은 금액</b>이 적용됩니다. 단, <b>0원이 하나라도 있으면 0원</b>이고,
+          사용부품에 <b>단순작업 같은 작업 항목</b>이 있으면 그게 먼저입니다. 접수 화면에서 금액은 언제든 고칠 수 있습니다.
         </div>
       </div>
 
@@ -29773,26 +29775,57 @@
     return out;
   };
 
-  // (v96) 공임비가 '정해진' 근거들을 모두 모은다 (불량명 + 사용부품)
-  window.laborFeeCandidates = function() {
-    const out = window.laborFeeFromDefects();
+  // (v99) 사용부품 쪽 근거 — 부품 마스터 공임비, 없으면 이름 키워드 규칙
+  //   ※ 공임비 자체를 나타내는 품목(작업-10 '공임비 A' 등)은 근거에서 제외한다.
+  //      그것까지 세면 B등급(30,000원) 건이 20,000원으로 내려앉는다.
+  window.laborFeeFromParts = function() {
     const parts = (typeof window._formGetSelectedParts === 'function') ? window._formGetSelectedParts() : [];
-    // (v97) ① 부품 마스터에 직접 지정된 공임비가 있으면 그것을 쓴다
-    const fromMaster = window.laborFeeFromPartMaster(parts);
-    fromMaster.forEach(function(x) { out.push(x); });
-    // ② 지정된 게 하나도 없을 때만 이름 키워드 규칙을 쓴다 (예전 방식 — 데이터 채우면 자연히 안 쓰임)
-    if (fromMaster.length === 0) {
+    const isLaborItem = function(x) {
+      const code = String((x && x.code) || '');
+      const label = String((x && (x.label || x.name)) || '').replace(/\s+/g, '');
+      if (code && code === String(window.LABOR_FEE_CODE || '')) return true;
+      return /^공임비[AB]?$/.test(label);
+    };
+    let out = window.laborFeeFromPartMaster(parts).filter(function(x) { return !isLaborItem(x); });
+    if (out.length === 0) {
       const rule = window.laborFeeRuleFromParts(parts);
-      if (rule) out.push({ from: '사용부품', label: rule.keyword, fee: Number(rule.fee) || 0, name: rule.name });
+      if (rule) out = [{ from: '사용부품', label: rule.keyword, fee: Number(rule.fee) || 0, name: rule.name }];
     }
     return out;
   };
 
-  // 여러 개가 정해져 있으면 가장 낮은 금액을 쓴다. 아무것도 없으면 null.
+  // (v96) 공임비가 '정해진' 근거들을 모두 모은다 (불량명 + 사용부품) — 표시용
+  window.laborFeeCandidates = function() {
+    return window.laborFeeFromDefects().concat(window.laborFeeFromParts());
+  };
+
+  // ============================================================
+  // (v99) 공임비 우선순위 — 2026-09-23 확정
+  //   ① 0원짜리가 하나라도 있으면          → 0원      (불량명 '없음' · 무증상 등)
+  //   ② 그다음 사용부품에 정해진 게 있으면  → 그중 가장 낮은 금액 (단순작업 7,500원 등)
+  //   ③ 나머지는 불량명에 정해진 것 중      → 가장 높은 금액      (A 20,000 / B 30,000)
+  //   ④ 아무것도 없으면 null → 기본 20,000원
+  //   ※ 이전(v96~v98)에는 전부 모아서 '가장 낮은 금액'이었다. ③이 최댓값으로 바뀐 것이 핵심.
+  // ============================================================
   window.laborFeePick = function() {
-    const c = window.laborFeeCandidates();
-    if (c.length === 0) return null;
-    return c.reduce(function(a, b) { return (Number(b.fee) < Number(a.fee)) ? b : a; });
+    const defects = window.laborFeeFromDefects();
+    const parts = window.laborFeeFromParts();
+
+    // ① 0원 최우선
+    const zero = defects.concat(parts).find(function(x) { return Number(x.fee) === 0; });
+    if (zero) return zero;
+
+    // ② 사용부품 (여러 개면 가장 낮은 금액)
+    if (parts.length) {
+      return parts.reduce(function(a, b) { return (Number(b.fee) < Number(a.fee)) ? b : a; });
+    }
+
+    // ③ 불량명 (여러 개면 가장 높은 금액)
+    if (defects.length) {
+      return defects.reduce(function(a, b) { return (Number(b.fee) > Number(a.fee)) ? b : a; });
+    }
+
+    return null;
   };
 
   // 지금 폼 기준 공임비 기본값 / 줄 이름
