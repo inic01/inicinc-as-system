@@ -5199,7 +5199,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v99';
+  const APP_VERSION = 'v100';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -28223,6 +28223,19 @@
         deliveryFee: parseInt(setEls('deliveryFee') || '0', 10) || 0,
         // (v93) 공임비 · 택배비 타입 · 박스비
         ...window.feeCollectForm(),
+        // (v100) 고객·제품·수리유형도 수집한다.
+        //   기존 버그: 화면에서 연락처·수리유형 등을 고쳐도 저장 목록에 없어 그대로 남았음.
+        //   확인요청 → 유상으로 바꿔도 repairType이 안 바뀌어 금액이 0원으로 표시되던 원인.
+        custName:        setEls('custName').trim(),
+        custPhone:       setEls('custPhone').trim(),
+        serialNumber:    setEls('serialNumber').trim(),
+        productCategory: setEls('productCategory'),
+        productNameSel:  setEls('productName'),
+        intakeDate:      setEls('intakeDate'),
+        repairTypeSel:   setEls('repairType'),
+        receiveTypeSel:  setEls('receiveType'),
+        recovery: (typeof selectedRecovery !== 'undefined' && Array.isArray(selectedRecovery))
+          ? selectedRecovery.slice() : null,
       };
     };
 
@@ -28327,6 +28340,52 @@
             answer: reinspectAnswer,
           }
         ];
+      }
+    }
+
+    // ============================================================
+    // (v100) 고객 · 제품 · 수리유형 · 수령방식 · 입고일 저장
+    //   폼에 값이 있을 때만 갱신한다. 빈 값으로 기존 데이터를 지우지 않기 위함.
+    // ============================================================
+    {
+      const _has = v => v !== undefined && v !== null && String(v).trim() !== '';
+      const _oldCust = c.customer || {};
+      const _oldProd = c.product || {};
+
+      updateData.customer = {
+        ..._oldCust,
+        name:  _has(formData.custName)  ? formData.custName  : (_oldCust.name  || ''),
+        phone: _has(formData.custPhone) ? formData.custPhone : (_oldCust.phone || ''),
+      };
+      updateData.product = {
+        ..._oldProd,
+        category: _has(formData.productCategory) ? formData.productCategory : (_oldProd.category || ''),
+        name:     _has(formData.productNameSel)  ? formData.productNameSel  : (_oldProd.name     || ''),
+        // 시리얼은 일부러 비우는 경우가 있어 '폼이 살아 있으면' 그대로 반영한다
+        serial:   document.getElementById('serialNumber') ? formData.serialNumber : (_oldProd.serial || ''),
+        recovery: Array.isArray(formData.recovery) ? formData.recovery : (_oldProd.recovery || []),
+      };
+      if (_has(formData.intakeDate))     updateData.intakeDate  = formData.intakeDate;
+      if (_has(formData.receiveTypeSel)) updateData.receiveType = formData.receiveTypeSel;
+
+      // 수리유형 — 바뀌면 '확인요청' 라벨도 함께 정리한다
+      const _newRT = String(formData.repairTypeSel || '').trim();
+      const _oldRT = String(c.repairType || '').trim();
+      if (_has(_newRT)) {
+        updateData.repairType = _newRT;
+        if (_newRT !== _oldRT) {
+          historyEntry.note = (historyEntry.note ? historyEntry.note + ' / ' : '')
+            + `[수리유형 변경] ${_oldRT || '(없음)'} → ${_newRT}`;
+          const _base = Array.isArray(updateData.actionStatus) ? updateData.actionStatus.slice()
+                      : (Array.isArray(c.actionStatus) ? c.actionStatus.slice() : []);
+          updateData.actionStatus = (_newRT === '확인요청')
+            ? (_base.includes('확인요청') ? _base : [..._base, '확인요청'])
+            : _base.filter(x => x !== '확인요청');
+        }
+      }
+      // 무상으로 되돌아가면 유상에서만 받는 금액은 0으로 맞춘다 (표시와 저장값 불일치 방지)
+      if (_has(_newRT) && _newRT.indexOf('유상') < 0) {
+        updateData.laborFee = 0;
       }
     }
 
