@@ -3286,11 +3286,6 @@
   .sub-pane.active{display:block}
   @media(max-width:760px){.sub-stats{grid-template-columns:repeat(2,1fr)}}
 
-
-  /* (v103) 수리내역 출력 버튼이 주 버튼일 때는 [접수 등록하기]를 감춘다 (확인요청·수정 모드는 그대로) */
-  .submit-area.print-main #submitBtn { display: none !important; }
-  #printSubmitBtn small { display: block; font-weight: 500; font-size: 12px; opacity: .92; margin-top: 2px; }
-  .hc-badge { font-size: 10px; font-weight: 700; padding: 2px 7px; border-radius: 99px; background: #fde4ee; color: #be185d; margin-left: 6px; vertical-align: middle; }
 </style>
 </head>
 <body class="login-mode">
@@ -4175,17 +4170,6 @@
       </div>
       <input type="hidden" id="repairType" value="">
 
-      <!-- (v103) 해피콜 요청 — 모든 건에 수리내역서를 출력하므로, 출력 후 단계(바로 완료 / 해피콜 대기)를 정한다 -->
-      <div id="happycallReqBlock" hidden style="margin-top:12px;">
-        <label style="font-size:11px; font-weight:700; color:var(--text-muted); display:block; margin-bottom:6px;">해피콜 요청<span class="hc-badge">NEW</span></label>
-        <div class="toggle-group cols-2" id="happycallReqOpts">
-          <div class="toggle-btn fee-btn" data-hc="yes">해피콜 요청함<span class="fee-amount">고객 안내·확인이 필요한 건</span></div>
-          <div class="toggle-btn fee-btn active" data-hc="no">요청 안 함<span class="fee-amount">기본값</span></div>
-        </div>
-        <div style="font-size:11px; color:var(--text-light); margin-top:6px; line-height:1.5;">유상 건과 박스 구매 건은 "요청 안 함"이어도 해피콜 대기로 넘어갑니다.</div>
-        <input type="hidden" id="happycallReq" value="no">
-      </div>
-
       <!-- (v93) 택배비(타입) / 대체품 / 박스 구매여부 — 공임비·택배비·박스비 분리 -->
       <div class="field-collapsible" id="deliveryFeeField">
         <!-- 택배비 타입 (유상 건에서만) -->
@@ -4804,8 +4788,7 @@
     deleteField,
     Timestamp,
     getCountFromServer,
-    writeBatch,
-    runTransaction
+    writeBatch
   } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
   // (v25) 이메일 링크 2단계 인증용 — Firebase Authentication SDK (Cloud Functions/SendGrid 불필요)
   import {
@@ -5216,7 +5199,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v103';
+  const APP_VERSION = 'v100';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -5334,39 +5317,10 @@
     return v;
   }
 
-  // ============================================================
-  // (v102) 접수번호 중복 방지 — 같은 번호가 이미 있으면 덮어쓰지 않고 새 번호로 저장한다
-  // ------------------------------------------------------------
-  //   2026-10-06 교환-20261006-001 임주혁 건이 사라진 원인:
-  //     ① 해피콜 카드에서 교환→반품 전환(번호는 그대로, 종류만 반품)
-  //     ② 새 교환 접수가 "종류가 교환인 건 중 최대 번호+1"을 세서 또 001을 받음
-  //     ③ 저장이 setDoc(통째로 교체)라 앞 건이 그대로 덮어써짐
-  //   → ① 번호 셀 때 종류가 아니라 번호 글자(교환-날짜-)도 본다 (generateCaseId / generateErpCaseId)
-  //   → ② 저장 직전에 "그 번호가 이미 있는지" 확인하고, 있으면 새 번호를 받아 저장한다 (이 함수)
-  //      (번호 발급 → 사진 업로드 수십 초 → 저장 사이에 다른 사람이 같은 번호를 받는 경우도 막는다)
-  // ============================================================
-  // 이미 저장돼 있는 문서가 "방금 내가 저장하려던 그 접수"인지 (재시도로 두 번 저장되는 경우)
-  window.caseIdIsMine = function (existing, mine) {
-    try {
-      const a = (existing.statusHistory || [])[0], b = (mine.statusHistory || [])[0];
-      if (a && b && a.changedAt && b.changedAt) return String(a.changedAt) === String(b.changedAt);
-      const eq = (x, y) => String(x == null ? '' : x) === String(y == null ? '' : y);
-      return eq(existing.type, mine.type)
-        && eq(existing.customer && existing.customer.name, mine.customer && mine.customer.name)
-        && eq(existing.customer && existing.customer.phone, mine.customer && mine.customer.phone)
-        && eq(existing.product && existing.product.name, mine.product && mine.product.name);
-    } catch (e) { return false; }
-  };
-
   // 저장 재시도 (3회) — 일시적인 네트워크·인증 끊김을 대부분 여기서 흡수
-  // opts.isNew === false → 이미 있는 문서(임시저장 이어쓰기 등)에 덮어쓰는 정상 경로. 그대로 setDoc
-  // 그 외(새 접수) → 번호가 이미 쓰여 있으면 새 번호를 받아 저장. 반환값 caseId 가 최종 번호다.
-  window.saveCaseWithRetry = async function (caseId, caseData, tries, opts) {
+  window.saveCaseWithRetry = async function (caseId, caseData, tries) {
     tries = tries || 3;
-    opts = opts || {};
-    const claimNew = opts.isNew !== false;
     let lastErr = null;
-    let renumberedFrom = '';
     for (let i = 1; i <= tries; i++) {
       try {
         // 저장 직전 출입증 갱신 (만료로 인한 거부 방지)
@@ -5374,41 +5328,15 @@
           const u = (typeof fbAuth !== 'undefined' && fbAuth) ? fbAuth.currentUser : null;
           if (u && u.getIdToken) await u.getIdToken(i > 1);
         } catch (e) {}
-        if (!claimNew) {
-          await setDoc(doc(db, 'cases', caseId), caseData);
-          return { ok: true, caseId, renumbered: false };
-        }
-        // 번호가 겹치면 새 번호로 바꿔 다시 시도 (최대 8번 — 동시에 여러 명이 접수해도 충분)
-        for (let r = 0; r < 8; r++) {
-          const ref = doc(db, 'cases', caseId);
-          const res = await runTransaction(db, async (tx) => {
-            const snap = await tx.get(ref);
-            if (snap.exists() && !window.caseIdIsMine(snap.data(), caseData)) return 'TAKEN';
-            tx.set(ref, caseData);
-            return 'OK';
-          });
-          if (res === 'OK') {
-            return { ok: true, caseId, renumbered: !!renumberedFrom, renumberedFrom };
-          }
-          // 같은 번호의 다른 접수가 이미 있다 → 새 번호 발급 후 다시
-          console.warn('[접수번호 중복] ' + caseId + ' 는 이미 다른 접수가 사용 중 → 새 번호를 받습니다');
-          const gen = await window.caseIdRegen(caseData.type);
-          if (!gen || !gen.id || gen.id === caseId) throw new Error('새 접수번호를 받지 못했습니다');
-          if (!renumberedFrom) renumberedFrom = caseId;
-          caseId = gen.id;
-          caseData.id = gen.id;
-          if (gen.seq != null) caseData.dailySeq = gen.seq;
-          if (gen.datePart) caseData.createdDate = gen.datePart;
-          caseData.idRenumberedFrom = renumberedFrom;
-        }
-        throw new Error('접수번호가 계속 겹쳐서 저장하지 못했습니다');
+        await setDoc(doc(db, 'cases', caseId), caseData);
+        return { ok: true };
       } catch (e) {
         lastErr = e;
         console.warn('[접수 저장 실패] 시도 ' + i + '/' + tries, e && e.message);
         if (i < tries) await new Promise(r => setTimeout(r, 1200 * i));
       }
     }
-    return { ok: false, error: lastErr, caseId };
+    return { ok: false, error: lastErr };
   };
 
   // 실패했을 때 화면을 덮는 경고 (닫기 없음 — 절대 그냥 못 지나감)
@@ -5453,12 +5381,10 @@
     const data = _pendRevive(item.data);
     const r = await window.saveCaseWithRetry(caseId, data, 2);
     if (r.ok) {
-      const finalId = r.caseId || caseId;   // (v102) 번호가 겹쳐 바뀌었으면 바뀐 번호
       window.pendingSubmitRemove(caseId); window.pendingSubmitRenderBanner();
-      if (finalId !== caseId && typeof showToast === 'function') showToast('접수번호가 겹쳐서 새 번호 ' + finalId + ' 로 저장했습니다', 'info');
       // (v89) [수리내역 출력]으로 접수하다 저장이 실패했던 건 → 저장되는 순간 내역서를 띄운다
       if (data && data.repairReportPrinted === true && typeof window.dashPrintRepairReport === 'function') {
-        try { window.dashPrintRepairReport({ ...data, id: finalId, _docId: finalId }, { autoPrint: true }); } catch (e) { console.warn(e); }
+        try { window.dashPrintRepairReport({ ...data, id: caseId, _docId: caseId }); } catch (e) { console.warn(e); }
       }
       return true;
     }
@@ -12159,15 +12085,11 @@
       const dataRows = aoa.slice(1).filter(row => row.some(cell => cell !== '' && cell !== null && cell !== undefined));
 
       // 헤더 → schema columns 매핑
-      //   (v101) 예전 머리글(aliases)도 같은 칸으로 알아듣는다
       const colByLabel = {};
-      schema.columns.forEach(c => {
-        colByLabel[c.label] = c;
-        (Array.isArray(c.aliases) ? c.aliases : []).forEach(a => { if (!colByLabel[a]) colByLabel[a] = c; });
-      });
+      schema.columns.forEach(c => { colByLabel[c.label] = c; });
       const headerCols = headerRow.map(h => colByLabel[h] || null);
       const missingRequired = schema.columns
-        .filter(c => !headerRow.includes(c.label) && !(Array.isArray(c.aliases) && c.aliases.some(a => headerRow.includes(a))))
+        .filter(c => !headerRow.includes(c.label))
         .map(c => c.label);
       // 누락된 컬럼이 있어도 일부 업데이트는 가능하므로 경고만
       // 단, 자연키 컬럼이 누락되면 진행 불가
@@ -12572,13 +12494,7 @@
 
   // 테이블 렌더링
   // (v96) 불량명별 공임비 배지 — 비어 있으면 '기본'(20,000원), 0이면 '없음'
-  //   (v101) 'A' · 'B' 로 저장된 불량명은 '공임비 A' · '공임비 B' 배지
   window.laborFeeBadge = function(v) {
-    const _r = (typeof window.laborFeeParse === 'function') ? window.laborFeeParse(v) : null;
-    if (_r && _r.kind === 'grade') {
-      const _isB = _r.grade === 'B';
-      return '<span title="' + Number(_r.fee).toLocaleString() + '원" style="background:' + (_isB ? '#fce7f3' : '#eef2ff') + ';color:' + (_isB ? '#9d174d' : '#3730a3') + ';padding:2px 9px;border-radius:99px;font-size:11.5px;font-weight:800;">공임비 ' + _r.grade + '</span>';
-    }
     if (v === null || v === undefined || v === '' || isNaN(Number(v))) {
       return '<span style="background:#f3f4f6;color:#9ca3af;padding:2px 9px;border-radius:99px;font-size:11.5px;font-weight:700;">기본</span>';
     }
@@ -12708,39 +12624,18 @@
         <div class="field-hint">같은 카테고리·제품 안에서 중복되지 않게 입력하세요.</div>
       </div>
 
-      ${(() => {
-        // (v101) 공임비 — 숫자 입력칸 → 고르는 칸 (미설정 / 공임비 A / 공임비 B / 없음 / 직접 입력)
-        //   예전(v96~v100)에 숫자로 넣은 20000·30000은 공임비 A·B로 보여 준다 (저장하면 A·B로 바뀜)
-        const _G = window.LABOR_FEE_GRADES || { A: { fee: 20000 }, B: { fee: 30000 } };
-        const _r = window.laborFeeParse(defect ? defect.laborFee : null);
-        let _sel = '', _custom = '';
-        if (_r.kind === 'grade') _sel = _r.grade;
-        else if (_r.kind === 'none') _sel = '0';
-        else if (_r.kind === 'custom') {
-          const _g = window.laborFeeGradeOfAmount(_r.fee);
-          if (_g) _sel = _g; else { _sel = 'custom'; _custom = String(_r.fee); }
-        }
-        const _w = n => Number(n || 0).toLocaleString();
-        const _opt = (v, t) => `<option value="${v}" ${_sel === v ? 'selected' : ''}>${t}</option>`;
-        return `
       <div class="admin-form-field">
-        <label>공임비 <span style="font-size:11px;font-weight:400;color:var(--text-hint);margin-left:6px">(미설정이면 기본 ${_w(window.LABOR_FEE_DEFAULT)}원)</span></label>
-        <select id="adminFormDefectLaborSel" onchange="adminOnDefectLaborSelChange()">
-          ${_opt('', `미설정 (기본 ${_w(window.LABOR_FEE_DEFAULT)}원)`)}
-          ${Object.keys(_G).map(k => _opt(k, `공임비 ${k} · ${_w(_G[k].fee)}원`)).join('')}
-          ${_opt('0', '없음 · 0원')}
-          ${_opt('custom', '직접 입력')}
-        </select>
-        <input type="number" id="adminFormDefectLaborFee" min="0" step="500" placeholder="금액 (원)"
-               value="${_custom}" autocomplete="off" style="margin-top:6px;${_sel === 'custom' ? '' : 'display:none;'}">
+        <label>공임비 <span style="font-size:11px;font-weight:400;color:var(--text-hint);margin-left:6px">(비워두면 기본 20,000원)</span></label>
+        <input type="number" id="adminFormDefectLaborFee" min="0" step="500" placeholder="비워두면 20,000원"
+               value="${defect && defect.laborFee != null && defect.laborFee !== '' ? Number(defect.laborFee) : ''}" autocomplete="off">
         <div class="field-hint">
-          💡 작업 시간으로 고르세요. <b>A</b> = 30분 이내, <b>B</b> = 30~60분, <b>없음</b> = 공임비 안 붙음(무증상 등).<br>
-          <b>미설정</b>으로 두면 A와 같은 <b>${_w(window.LABOR_FEE_DEFAULT)}원</b>이 붙습니다.<br>
-          ※ (v101) 불량명을 여러 개 고르면 <b>그중 가장 비싼 금액</b>이 적용됩니다.
-          단, 사용부품이 <b>작업 항목 하나뿐</b>이면(예: 업데이트 작업) 그 항목의 공임비가 먼저입니다. 접수 화면에서 금액은 언제든 고칠 수 있습니다.
+          💡 <b>예외만 입력</b>하세요. 비워두면 유상 건에 기본 <b>20,000원</b>이 붙습니다.<br>
+          예) 무증상 · 배터리불량처럼 작업이 없는 불량명은 <b>0</b>을 입력하면 공임비가 안 붙습니다.<br>
+          예) <b>A등급</b>은 비워두거나 20000, <b>B등급</b>(30~60분 작업)은 <b>30000</b>을 넣으세요.<br>
+          ※ (v99) 불량명을 여러 개 고르면 <b>그중 가장 높은 금액</b>이 적용됩니다. 단, <b>0원이 하나라도 있으면 0원</b>이고,
+          사용부품에 <b>단순작업 같은 작업 항목</b>이 있으면 그게 먼저입니다. 접수 화면에서 금액은 언제든 고칠 수 있습니다.
         </div>
-      </div>`;
-      })()}
+      </div>
 
       <div class="admin-form-field">
         <label>표시 순서</label>
@@ -12756,16 +12651,6 @@
 
     document.getElementById('adminFormModal').classList.add('show');
     setTimeout(() => document.getElementById('adminFormDefectName')?.focus(), 100);
-  };
-
-  // (v101) 불량명 공임비 — '직접 입력'을 고를 때만 금액 칸을 보여 준다
-  window.adminOnDefectLaborSelChange = function() {
-    const sel = document.getElementById('adminFormDefectLaborSel');
-    const amt = document.getElementById('adminFormDefectLaborFee');
-    if (!sel || !amt) return;
-    const isCustom = sel.value === 'custom';
-    amt.style.display = isCustom ? '' : 'none';
-    if (isCustom) setTimeout(() => amt.focus(), 0);
   };
 
   // 카테고리 변경 시 제품 옵션 갱신 (모달 안)
@@ -12812,18 +12697,10 @@
     const category = document.getElementById('adminFormDefectCategory')?.value?.trim();
     const product = document.getElementById('adminFormDefectProduct')?.value?.trim();
     const name = document.getElementById('adminFormDefectName')?.value?.trim();
-    // (v101) 공임비 — 미설정 null / 'A' / 'B' / 없음 0 / 직접 입력 숫자
-    const _laborSel = document.getElementById('adminFormDefectLaborSel')?.value ?? '';
-    let laborFee = null;
-    if (_laborSel === 'custom') {
-      laborFee = window.laborFeeNormalize(document.getElementById('adminFormDefectLaborFee')?.value);
-      if (laborFee === null || typeof laborFee !== 'number' || !isFinite(laborFee)) {
-        return showToastAndFocus('직접 입력 금액을 0 이상 숫자로 넣으세요', 'adminFormDefectLaborFee', 'error');
-      }
-    } else {
-      laborFee = window.laborFeeNormalize(_laborSel);   // '' → null, 'A' → 'A', 'B' → 'B', '0' → 0
-      if (!window.laborFeeIsValidStored(laborFee)) laborFee = null;
-    }
+    // (v96) 공임비 — 빈칸이면 null(미설정 → 기본 20,000원)
+    const laborFeeRaw = document.getElementById('adminFormDefectLaborFee')?.value;
+    const laborFee = (laborFeeRaw === '' || laborFeeRaw == null || isNaN(Number(laborFeeRaw)))
+      ? null : Math.max(0, Math.round(Number(laborFeeRaw)));
     const orderRaw = document.getElementById('adminFormDefectOrder')?.value?.trim();
     const order = orderRaw ? Number(orderRaw) : 100;
 
@@ -13327,13 +13204,13 @@
       </div>
 
       <div class="admin-form-field">
-        <label>공임비 <span style="font-size:11px;font-weight:400;color:var(--text-hint);margin-left:6px">(작업 항목만 · 비워두면 불량명 공임비를 따름)</span></label>
-        <input type="number" id="adminFormPartLaborFee" min="0" step="500" placeholder="비워두면 불량명 기준"
+        <label>공임비 <span style="font-size:11px;font-weight:400;color:var(--text-hint);margin-left:6px">(비워두면 기본 20,000원)</span></label>
+        <input type="number" id="adminFormPartLaborFee" min="0" step="500" placeholder="비워두면 20,000원"
                value="${part && part.laborFee != null && part.laborFee !== '' ? Number(part.laborFee) : ''}" autocomplete="off">
         <div class="field-hint">
-          💡 <b>작업 항목에만 입력</b>하세요. 모터 같은 일반 부품은 비워두면 됩니다.<br>
-          예) 업데이트 작업 · 단순 작업 → <b>10000</b> / 무증상 → <b>0</b> (공임비 안 붙음)<br>
-          ※ (v101) 사용부품이 <b>이 항목 하나뿐일 때만</b> 이 금액이 적용됩니다. 다른 부품과 같이 쓰면 불량명 공임비를 따릅니다.
+          💡 <b>작업 항목에만 입력</b>하세요. 일반 부품은 비워두면 됩니다.<br>
+          예) 납땜 작업 · 단순 작업 · 업데이트 작업 → <b>7500</b> / 무증상 → <b>0</b> (공임비 안 붙음)<br>
+          ※ 이 부품을 사용부품에 넣으면 공임비가 이 금액으로 바뀝니다. 여러 개면 <b>가장 낮은 금액</b>이 적용됩니다.
         </div>
       </div>
 
@@ -16985,26 +16862,20 @@
         { key: 'category', label: '카테고리' },
         { key: 'product',  label: '제품' },
         { key: 'name',     label: '불량명' },
-        // (v101) 공임비 — A / B / 없음(0) / 숫자(직접 금액) / 빈칸(미설정 = 기본 20,000원)
-        //   예전 머리글 '공임비(비우면 기본20000)'로 받아 둔 파일도 그대로 올릴 수 있다 (aliases)
-        //   알아듣지 못한 글자는 조용히 빈칸으로 바꾸지 않고 그 줄을 오류로 건너뛴다
-        { key: 'laborFee', label: '공임비(A/B/없음/숫자)', aliases: ['공임비(비우면 기본20000)'],
-          parse: v => window.laborFeeNormalize(v),
-          format: v => {
-            const r = window.laborFeeParse(v);
-            if (r.kind === 'grade') return r.grade;
-            if (r.kind === 'none') return '없음';
-            if (r.kind === 'custom') return r.fee;
-            return '';
-          } },
+        // (v96) 공임비 — 비우면 기본 20,000원, 0을 넣으면 공임비 안 붙음
+        { key: 'laborFee', label: '공임비(비우면 기본20000)',
+          parse: v => { const t = String(v == null ? '' : v).replace(/[^0-9-]/g, '').trim();
+                        if (t === '') return null;
+                        const n = Number(t); return isNaN(n) ? null : Math.max(0, Math.round(n)); },
+          format: v => (v === null || v === undefined || v === '' || isNaN(Number(v))) ? '' : Number(v) },
         { key: 'order',    label: '표시순서', parse: v => Number(v) || 0, format: v => v ?? '' },
         { key: 'active',   label: '상태(활성=Y)', parse: v => String(v).toUpperCase() !== 'N', format: v => v === false ? 'N' : 'Y' }
       ],
       naturalKey: ['category', 'product', 'name'],
       validate: (row) => {
         if (!row.category || !row.name) return '카테고리와 불량명은 필수';
-        if (!window.laborFeeIsValidStored(row.laborFee)) {
-          return '공임비는 A · B · 없음 · 숫자 중 하나로 적으세요 (빈칸이면 기본 20,000원)';
+        if (row.laborFee !== null && row.laborFee !== undefined && (isNaN(Number(row.laborFee)) || Number(row.laborFee) < 0)) {
+          return '공임비는 0 이상 숫자이거나 빈칸';
         }
         return null;
       }
@@ -17289,12 +17160,8 @@
         }
 
         // 헤더 라벨 → 컬럼 정의 매핑
-        //   (v101) 예전 머리글(aliases)도 같은 칸으로 알아듣는다 — 머리글을 바꿔도 예전 파일이 그대로 올라가게
         const labelToKey = {};
-        schema.columns.forEach(c => {
-          labelToKey[c.label] = c;
-          (Array.isArray(c.aliases) ? c.aliases : []).forEach(a => { if (!labelToKey[a]) labelToKey[a] = c; });
-        });
+        schema.columns.forEach(c => { labelToKey[c.label] = c; });
 
         // order 필드를 가진 컬럼이 있는지 확인 (자동 채우기 대상 여부)
         const hasOrderColumn = schema.columns.some(c => c.key === 'order');
@@ -20361,7 +20228,7 @@
     const ov = document.getElementById('repairReportOverlay');
     if (ov) ov.remove();
   };
-  window.dashPrintRepairReport = function(c, opts) {
+  window.dashPrintRepairReport = function(c) {
     if (!c) return;
     const esc = (typeof escapeHtml === 'function') ? escapeHtml : (x => String(x == null ? '' : x));
     const won = n => (Number(n) || 0).toLocaleString('ko-KR') + '원';
@@ -20531,17 +20398,6 @@
     fr.title = '수리내역서';
     ov.appendChild(fr);
     document.body.appendChild(ov);
-    // (v103) 접수와 함께 출력할 때는 내역서가 뜨면 인쇄창을 바로 연다 (글꼴이 로드된 뒤, 최대 1.5초 기다림)
-    if (opts && opts.autoPrint) {
-      fr.addEventListener('load', function() {
-        try {
-          const w = fr.contentWindow;
-          const go = function() { try { w.focus(); w.print(); } catch (e) { console.warn('[자동 인쇄] 실패', e); } };
-          const ready = (w.document && w.document.fonts && w.document.fonts.ready) ? w.document.fonts.ready : null;
-          if (ready) Promise.race([ready, new Promise(r => setTimeout(r, 1500))]).then(go); else setTimeout(go, 600);
-        } catch (e) { console.warn('[자동 인쇄] 준비 실패', e); }
-      }, { once: true });
-    }
     fr.srcdoc = html;
   };
 
@@ -20647,7 +20503,7 @@
                   <td style="text-align:right;font-weight:600;">${(isFreeRepair ? 0 : (p.amount || 0)).toLocaleString()}원</td>
                 </tr>
               `).join('')}
-              ${laborFeeVal > 0 ? _feeRow('labor', '🛠️', escapeHtml((typeof window.laborFeeNameFor === 'function') ? window.laborFeeNameFor(laborFeeVal) : (c.laborFeeName || window.LABOR_FEE_NAME)), laborFeeVal, '#eef2ff', '#3730a3') : ''}
+              ${laborFeeVal > 0 ? _feeRow('labor', '🛠️', escapeHtml(c.laborFeeName || window.LABOR_FEE_NAME), laborFeeVal, '#eef2ff', '#3730a3') : ''}
               ${deliveryFeeVal > 0 ? _feeRow('ship', '🚚', escapeHtml(window._shipFeeLabel(c)), deliveryFeeVal, '#fff8eb', '#92400e') : ''}
               ${boxFeeVal > 0 ? _feeRow('box', '📦', '박스비', boxFeeVal, '#f0fdf4', '#166534') : ''}
             </tbody>
@@ -22999,14 +22855,10 @@
     const qtyBadge = (field.qty != null)
       ? ` <span style="display:inline-block;margin-left:6px;background:#fef3c7;color:#92400e;border:1px solid #fcd34d;border-radius:6px;padding:1px 9px;font-size:14px;font-weight:800;vertical-align:middle;">수량 ${escapeHtml(String(field.qty))}</span>`
       : '';
-    // (v101) 줄 아래 안내 (예: 공임비가 A·B 금액이 아닐 때) — 표시만, 복사 값에는 안 섞임
-    const noteHtml = field.note
-      ? `<div style="margin-top:4px;font-size:12.5px;font-weight:700;color:#b45309;">${escapeHtml(field.note)}</div>`
-      : '';
     return `
       <div style="display:grid;grid-template-columns:140px 1fr auto;gap:10px;align-items:center;padding:11px 12px;background:#fff;border:1px solid #e5e7eb;border-radius:8px;">
         <div style="font-size:15px;font-weight:800;color:#374151;">${escapeHtml(field.label)}</div>
-        <div style="font-size:15px;font-weight:600;color:${isEmpty ? '#9ca3af' : '#111827'};font-family:${field.mono ? 'monospace' : 'inherit'};word-break:break-all;">${escapeHtml(val || '(비어있음)')}${qtyBadge}${noteHtml}</div>
+        <div style="font-size:15px;font-weight:600;color:${isEmpty ? '#9ca3af' : '#111827'};font-family:${field.mono ? 'monospace' : 'inherit'};word-break:break-all;">${escapeHtml(val || '(비어있음)')}${qtyBadge}</div>
         <button type="button" data-erp-copy="${docId}" data-copy-value="${escapeHtml(val)}" style="padding:6px 12px;background:#eff6ff;color:#1e40af;border:1px solid #bfdbfe;border-radius:6px;font-size:12px;font-weight:700;cursor:pointer;${isEmpty ? 'opacity:0.4;pointer-events:none;' : ''}">📋 복사</button>
       </div>
     `;
@@ -23260,18 +23112,10 @@
       const _laborForErp = String(c.repairType || '').indexOf('유상') >= 0 ? (Number(c.laborFee) || 0) : 0;
       if (_laborForErp > 0) {
         _partSeq++;
-        // (v101) 이름은 최종 금액으로 정한다 — 30,000원이면 공임비 B, 그 밖은 공임비 A (9/29 확정)
-        //        해피콜이 카드에서 금액을 고쳐도 이름이 따라간다.
-        //        A·B 금액이 아니면(10,000 · 7,500 등) ERP에서 금액을 고쳐 넣도록 안내를 붙인다 (복사 값에는 안 섞임)
-        const _laborErpName = (typeof window.laborFeeNameFor === 'function')
-          ? window.laborFeeNameFor(_laborForErp) : (c.laborFeeName || window.LABOR_FEE_NAME);
-        const _laborIsGrade = (typeof window.laborFeeIsGradeAmount === 'function')
-          ? window.laborFeeIsGradeAmount(_laborForErp) : true;
         fields.push({
           label: `사용부품${_partSeq}`,
-          value: _laborErpName,
+          value: c.laborFeeName || window.LABOR_FEE_NAME,   // (v95)
           qty: 1,
-          note: _laborIsGrade ? '' : `금액 ${_laborForErp.toLocaleString()}원 — ERP에서 금액을 고쳐 넣어 주세요`,
           mono: false,
           multiline: false
         });
@@ -27743,7 +27587,7 @@
 
       // 새 케이스 ID 발급 (기존 접수 규칙 그대로)
       const gen = await generateCaseId();
-      let caseId = gen.id;   // (v102) 저장 때 번호가 겹치면 바뀔 수 있어 let
+      const caseId = gen.id;
       const datePart = gen.datePart;
       const seq = gen.seq;
 
@@ -27820,10 +27664,7 @@
         }],
       };
 
-      // (v102) 같은 번호가 이미 있으면 덮어쓰지 않고 새 번호로 저장
-      const _addRes = await window.saveCaseWithRetry(caseId, caseData, 3, { isNew: true });
-      if (!_addRes.ok) throw (_addRes.error || new Error('추가요청 접수 저장 실패'));
-      caseId = _addRes.caseId || caseId;
+      await setDoc(doc(db, 'cases', caseId), caseData);
 
       showToast(`추가요청건 접수 완료 → 수리대기 (${caseId})`, 'success');
 
@@ -28078,7 +27919,6 @@
     if (typeof window.feeRestoreForm === 'function') {
       window.feeRestoreForm(c);
     }
-    if (typeof window.hcRestore === 'function') window.hcRestore(c);   // (v103) 해피콜 요청 복원
 
     // 불량 정보 (1~5번)
     setTimeout(() => {
@@ -29909,156 +29749,70 @@
     { k: 'F', v: 22000 }
   ];
   window.BOX_FEE_OPTIONS = [9000, 12000];
-  // ============================================================
-  // (v101) 공임비 금액 — 여기 한 곳에서만 관리한다 (2026-09-29 확정)
-  //   A = 30분 이내, B = 30~60분. 금액을 바꿀 때는 fee 숫자만 고치면 된다.
-  //   불량명에 'A'·'B'로 저장된 것은 모두 여기 금액을 따라간다.
-  //   name·code 는 ERP 전산작업·부품 마스터의 품목(작업-10 · 작업-11)과 같아야 한다.
-  // ============================================================
-  window.LABOR_FEE_GRADES = {
-    A: { fee: 20000, name: '공임비 A', code: '작업-10' },
-    B: { fee: 30000, name: '공임비 B', code: '작업-11' }
-  };
-  window.LABOR_FEE_DEFAULT = window.LABOR_FEE_GRADES.A.fee;   // 미설정 = A 금액
-  window.LABOR_FEE_NAME = window.LABOR_FEE_GRADES.A.name;
-  window.LABOR_FEE_CODE = window.LABOR_FEE_GRADES.A.code;
-  // (v101) v95의 부품명 키워드 규칙(LABOR_FEE_PART_RULES · 단순작업/업데이트작업 7,500원)은 없앴다.
-  //        작업 항목의 금액은 관리자 → 부품 → 공임비 칸에서만 정한다.
+  window.LABOR_FEE_DEFAULT = 20000;
+  window.LABOR_FEE_NAME = '공임비 A';
+  window.LABOR_FEE_CODE = '작업-10';
 
-  // (v101) 공임비 값 해석 — 불량명 마스터·엑셀에 들어온 값을 뜻으로 바꾼다
-  //   null/빈칸/'기본'/'미설정' → unset  (미설정 = 기본 20,000원)
-  //   'A' 'b' '공임비 B' 'B등급' → grade
-  //   0 / '0' / '없음'          → none   (0원)
-  //   7500 / '7,500' / '7500원' → custom (직접 금액)
-  //   그 밖의 글자·음수         → invalid
-  window.laborFeeParse = function(v) {
-    const grades = window.LABOR_FEE_GRADES || {};
-    if (v === null || v === undefined) return { kind: 'unset', fee: null };
-    if (typeof v === 'number') {
-      if (!isFinite(v) || v < 0) return { kind: 'invalid', fee: null, raw: v };
-      const n0 = Math.round(v);
-      return n0 === 0 ? { kind: 'none', fee: 0 } : { kind: 'custom', fee: n0 };
-    }
-    let s = String(v);
-    try { s = s.normalize('NFKC'); } catch (e) {}
-    s = s.replace(/\s+/g, '').toUpperCase();
-    if (s === '' || s === '기본' || s === '미설정') return { kind: 'unset', fee: null };
-    if (s === '없음') return { kind: 'none', fee: 0 };
-    const g = s.replace(/^공임비/, '').replace(/등급$/, '');
-    if (Object.prototype.hasOwnProperty.call(grades, g)) {
-      return { kind: 'grade', grade: g, fee: Number(grades[g].fee) || 0 };
-    }
-    const t = s.replace(/,/g, '').replace(/원$/, '');
-    if (/^\d+(\.\d+)?$/.test(t)) {
-      const n = Math.round(Number(t));
-      return n === 0 ? { kind: 'none', fee: 0 } : { kind: 'custom', fee: n };
-    }
-    return { kind: 'invalid', fee: null, raw: v };
+  // ──────────────────────────────────────────────────────────
+  // (v95) 사용부품에 '작업 항목'이 들어가면 공임비가 그 금액으로 바뀐다
+  //   예) 사용부품에 '단순작업' 또는 '업데이트작업'을 넣으면 공임비 7,500원
+  //   - keyword: 부품명에 이 글자가 들어 있으면 해당 (공백 무시)
+  //   - fee    : 그때의 공임비
+  //   - name   : ERP 전산작업·카드·수리내역서에 표시될 공임비 줄 이름
+  //   여러 개가 걸리면 가장 낮은 금액을 쓴다.
+  //   해당 없으면 기본 20,000원.
+  // ──────────────────────────────────────────────────────────
+  window.LABOR_FEE_PART_RULES = [
+    { keyword: '단순작업',    fee: 7500, name: '공임비 A' },
+    { keyword: '업데이트작업', fee: 7500, name: '공임비 A' }
+  ];
+
+  // 선택된 사용부품 목록에서 적용될 규칙을 찾는다 (없으면 null)
+  window.laborFeeRuleFromParts = function(parts) {
+    const list = Array.isArray(parts) ? parts : [];
+    const rules = Array.isArray(window.LABOR_FEE_PART_RULES) ? window.LABOR_FEE_PART_RULES : [];
+    let hit = null;
+    list.forEach(function(p) {
+      const nm = String((p && (p.name || p.partName)) || '').replace(/\s+/g, '');
+      if (!nm) return;
+      rules.forEach(function(rule) {
+        const k = String(rule && rule.keyword || '').replace(/\s+/g, '');
+        if (!k || nm.indexOf(k) < 0) return;
+        if (hit == null || Number(rule.fee) < Number(hit.fee)) hit = rule;
+      });
+    });
+    return hit;
   };
 
-  // (v101) 저장용 값 — 'A' | 'B' | 0 | 숫자 | null. 알아듣지 못한 값은 NaN (엑셀 검증에서 오류 처리)
-  window.laborFeeNormalize = function(v) {
-    const r = window.laborFeeParse(v);
-    if (r.kind === 'unset') return null;
-    if (r.kind === 'grade') return r.grade;
-    if (r.kind === 'none') return 0;
-    if (r.kind === 'custom') return r.fee;
-    return NaN;
-  };
-
-  // (v101) 저장해도 되는 값인가 — null · 등급 글자 · 0 이상 숫자
-  window.laborFeeIsValidStored = function(v) {
-    if (v === null || v === undefined) return true;
-    if (typeof v === 'string') return Object.prototype.hasOwnProperty.call(window.LABOR_FEE_GRADES || {}, v);
-    return typeof v === 'number' && isFinite(v) && v >= 0;
-  };
-
-  // (v101) 공임비 자체를 나타내는 품목(작업-10 공임비 A · 작업-11 공임비 B)인가
-  //        이런 품목은 사용부품 개수에도, 공임비 근거에도 넣지 않는다
-  window.laborFeeIsLaborItem = function(x) {
-    const grades = window.LABOR_FEE_GRADES || {};
-    const code = String((x && x.code) || '').trim();
-    const codes = Object.keys(grades).map(function(k) { return String(grades[k].code || ''); });
-    if (code && codes.indexOf(code) >= 0) return true;
-    const label = String((x && (x.label || x.name || x.partName)) || '').replace(/\s+/g, '');
-    return /^공임비[A-Z]?$/.test(label);
-  };
-
-  // (v101) 이 금액과 같은 등급 글자 ('A' | 'B' | '')
-  window.laborFeeGradeOfAmount = function(amount) {
-    const grades = window.LABOR_FEE_GRADES || {};
-    const n = Number(amount) || 0;
-    const keys = Object.keys(grades);
-    for (let i = 0; i < keys.length; i++) {
-      if (Number(grades[keys[i]].fee) === n) return keys[i];
-    }
-    return '';
-  };
-  // (v101) 이 금액이 등급 금액(A 20,000 · B 30,000)인가
-  window.laborFeeIsGradeAmount = function(amount) {
-    return window.laborFeeGradeOfAmount(amount) !== '';
-  };
-
-  // (v101) 공임비 줄 이름 — '최종 금액' 기준 (9/29 확정)
-  //   30,000원 → 공임비 B / 그 밖의 금액(20,000 · 10,000 · 7,500 …) → 공임비 A
-  //   엔지니어·해피콜이 금액을 고치면 이름도 따라간다. ERP 전산작업·카드·금액표 모두 이 함수를 쓴다.
-  window.laborFeeNameFor = function(amount) {
-    const grades = window.LABOR_FEE_GRADES || {};
-    const n = Number(amount) || 0;
-    const keys = Object.keys(grades);
-    for (let i = 0; i < keys.length; i++) {
-      if (Number(grades[keys[i]].fee) === n) return grades[keys[i]].name;
-    }
-    return window.LABOR_FEE_NAME;
-  };
-
-  // (v101) 불량명 이름으로 불량명 마스터 한 줄을 찾는다
-  //   ① 같은 카테고리 + 같은 제품  ② 같은 제품군(매칭키워드)  ③ 공통(교환·반품용)
-  //   ※ v96~v100은 ②만 봤다. 같은 제품군에 같은 이름이 여러 개면 목록 순서상 먼저 나온 것을 썼고,
-  //      접수 화면에서 고를 수 있는 공통(교환·반품용) 불량명은 아예 못 찾았다.
-  window.laborFeeFindDefect = function(nm, cat, prod) {
-    const defs = Array.isArray(window._adminDefects) ? window._adminDefects : [];
-    const same = function(a, b) {
-      if (a === b) return true;
-      try { return !!(window.isSameProductGroup && window.isSameProductGroup(a, b)); } catch (e) { return false; }
-    };
-    const cands = defs.filter(function(d) { return d && d.active !== false && d.name === nm; });
-    if (!cands.length) return null;
-    return cands.find(function(d) { return d.category === cat && d.product === prod; })
-      || cands.find(function(d) {
-        if (d.category && cat && d.category !== cat) return false;
-        if (d.product && prod && !same(d.product, prod)) return false;
-        return true;
-      })
-      || cands.find(function(d) { return d.category === ((typeof COMMON_CATEGORY !== 'undefined') ? COMMON_CATEGORY : '공통(교환·반품용)'); })
-      || null;
-  };
-
-  // (v101) 선택된 불량명의 공임비 — 고른 불량명은 모두 근거가 된다
-  //   미설정(또는 마스터에서 못 찾음)은 기본 20,000원으로 계산한다 (9/29 확정)
-  //   반환: [{ from:'불량명', label, fee, kind:'grade'|'none'|'custom'|'unset', grade }]
+  // (v96) 선택된 불량명에 등록된 공임비 찾기
+  //   불량명 마스터(defects)의 laborFee 가 비어 있으면 '미설정' — 기본 20,000원이 적용된다
   window.laborFeeFromDefects = function() {
     const out = [];
+    const defs = Array.isArray(window._adminDefects) ? window._adminDefects : [];
+    if (defs.length === 0) return out;
     const cat = (document.getElementById('productCategory') || {}).value || '';
     const prod = (document.getElementById('productName') || {}).value || '';
     for (let n = 1; n <= 5; n++) {
       const nm = window._defectPickState && window._defectPickState[n] && window._defectPickState[n].name;
       if (!nm) continue;
-      const hit = window.laborFeeFindDefect(nm, cat, prod);
-      const r = window.laborFeeParse(hit ? hit.laborFee : null);
-      const known = (r.kind === 'grade' || r.kind === 'none' || r.kind === 'custom');
-      out.push({
-        from: '불량명', label: nm,
-        fee: known ? r.fee : window.LABOR_FEE_DEFAULT,
-        kind: known ? r.kind : 'unset',
-        grade: r.grade || null
+      const hit = defs.find(function(d) {
+        if (!d || d.active === false || d.name !== nm) return false;
+        if (d.category && cat && d.category !== cat) return false;
+        if (d.product && prod && d.product !== prod) {
+          if (!(window.isSameProductGroup && window.isSameProductGroup(d.product, prod))) return false;
+        }
+        return true;
       });
+      if (!hit) continue;
+      const v = hit.laborFee;
+      if (v === null || v === undefined || v === '' || isNaN(Number(v))) continue;  // 미설정
+      out.push({ from: '불량명', label: nm, fee: Number(v) });
     }
     return out;
   };
 
   // (v97) 부품 마스터에 직접 지정된 공임비 (부품 관리 → 공임비 칸)
-  //   비어 있으면 '미설정' — (v101) 사용부품이 그 항목 하나뿐일 때만 쓰인다
+  //   비어 있으면 '미설정' — 아래 키워드 규칙이나 기본 20,000원이 적용된다
   window.laborFeeFromPartMaster = function(parts) {
     const out = [];
     const list = Array.isArray(parts) ? parts : [];
@@ -30080,81 +29834,67 @@
     return out;
   };
 
-  // (v101) 공임비 계산에 쓰는 사용부품 — 공임비 A·B 품목(작업-10 · 작업-11)은 뺀다
-  window.laborFeeUsedParts = function() {
-    const parts = (typeof window._formGetSelectedParts === 'function') ? window._formGetSelectedParts() : [];
-    return parts.filter(function(p) { return p && !window.laborFeeIsLaborItem(p); });
-  };
-
-  // (v101) 사용부품 쪽 근거 — 부품 마스터에 공임비가 정해진 것 (표시·점검용)
-  //   v95의 부품명 키워드 규칙(7,500원)은 없앴다.
+  // (v99) 사용부품 쪽 근거 — 부품 마스터 공임비, 없으면 이름 키워드 규칙
+  //   ※ 공임비 자체를 나타내는 품목(작업-10 '공임비 A' 등)은 근거에서 제외한다.
+  //      그것까지 세면 B등급(30,000원) 건이 20,000원으로 내려앉는다.
   window.laborFeeFromParts = function() {
-    return window.laborFeeFromPartMaster(window.laborFeeUsedParts());
+    const parts = (typeof window._formGetSelectedParts === 'function') ? window._formGetSelectedParts() : [];
+    const isLaborItem = function(x) {
+      const code = String((x && x.code) || '');
+      const label = String((x && (x.label || x.name)) || '').replace(/\s+/g, '');
+      if (code && code === String(window.LABOR_FEE_CODE || '')) return true;
+      return /^공임비[AB]?$/.test(label);
+    };
+    let out = window.laborFeeFromPartMaster(parts).filter(function(x) { return !isLaborItem(x); });
+    if (out.length === 0) {
+      const rule = window.laborFeeRuleFromParts(parts);
+      if (rule) out = [{ from: '사용부품', label: rule.keyword, fee: Number(rule.fee) || 0, name: rule.name }];
+    }
+    return out;
   };
 
-  // (v96) 공임비가 '정해진' 근거들을 모두 모은다 (불량명 + 사용부품) — 표시·점검용
+  // (v96) 공임비가 '정해진' 근거들을 모두 모은다 (불량명 + 사용부품) — 표시용
   window.laborFeeCandidates = function() {
     return window.laborFeeFromDefects().concat(window.laborFeeFromParts());
   };
 
   // ============================================================
-  // (v101) 공임비 규칙 — 2026-09-29 확정
-  //   ① 사용부품이 1개뿐이고 그 항목에 공임비가 정해져 있으면 → 그 금액
-  //        (업데이트 작업 10,000 · 무증상 0 처럼 '그 작업 하나만 했을 때' 금액)
-  //   ② 그 외 → 불량명 공임비 중 가장 비싼 것
-  //        (A 20,000 / B 30,000 / 없음 0 / 직접 금액. 미설정 불량명은 20,000원으로 계산)
-  //   ③ 불량명이 없으면 → 기본 20,000원
-  //   ※ 무증상(없음) 불량명에 필터 같은 부품이 나가면 0원 (A안). 필터는 부품값만 받는다.
-  //   ※ v99~v100 규칙(0원 최우선 · 사용부품 최저가 우선)은 없앴다.
-  //      작업 항목이 끼기만 하면 공임비가 내려앉던 문제(업데이트 작업 + 히터 = 10,000원)가 없어진다.
-  //   반환: { fee, rule:1|2|3, from:'사용부품'|'불량명'|'기본', label, kind, grade }
+  // (v99) 공임비 우선순위 — 2026-09-23 확정
+  //   ① 0원짜리가 하나라도 있으면          → 0원      (불량명 '없음' · 무증상 등)
+  //   ② 그다음 사용부품에 정해진 게 있으면  → 그중 가장 낮은 금액 (단순작업 7,500원 등)
+  //   ③ 나머지는 불량명에 정해진 것 중      → 가장 높은 금액      (A 20,000 / B 30,000)
+  //   ④ 아무것도 없으면 null → 기본 20,000원
+  //   ※ 이전(v96~v98)에는 전부 모아서 '가장 낮은 금액'이었다. ③이 최댓값으로 바뀐 것이 핵심.
   // ============================================================
   window.laborFeePick = function() {
-    // ①
-    const parts = window.laborFeeUsedParts();
-    if (parts.length === 1) {
-      const fixed = window.laborFeeFromPartMaster(parts);
-      if (fixed.length) {
-        const f = Number(fixed[0].fee) || 0;
-        return { fee: f, rule: 1, from: '사용부품', label: fixed[0].label, kind: f === 0 ? 'none' : 'custom', grade: null };
-      }
-    }
-    // ②
     const defects = window.laborFeeFromDefects();
-    if (defects.length) {
-      let top = null;
-      defects.forEach(function(d) { if (top === null || Number(d.fee) > Number(top.fee)) top = d; });
-      return Object.assign({ rule: 2 }, top);
+    const parts = window.laborFeeFromParts();
+
+    // ① 0원 최우선
+    const zero = defects.concat(parts).find(function(x) { return Number(x.fee) === 0; });
+    if (zero) return zero;
+
+    // ② 사용부품 (여러 개면 가장 낮은 금액)
+    if (parts.length) {
+      return parts.reduce(function(a, b) { return (Number(b.fee) < Number(a.fee)) ? b : a; });
     }
-    // ③
-    return { fee: window.LABOR_FEE_DEFAULT, rule: 3, from: '기본', label: '', kind: 'default', grade: null };
+
+    // ③ 불량명 (여러 개면 가장 높은 금액)
+    if (defects.length) {
+      return defects.reduce(function(a, b) { return (Number(b.fee) > Number(a.fee)) ? b : a; });
+    }
+
+    return null;
   };
 
-  // 지금 폼 기준 공임비 기본값
+  // 지금 폼 기준 공임비 기본값 / 줄 이름
   window.laborFeeBase = function() {
     const p = window.laborFeePick();
     return p ? (Number(p.fee) || 0) : window.LABOR_FEE_DEFAULT;
   };
-  // (v101) 지금 폼의 공임비 줄 이름 — 화면에 들어 있는 최종 금액 기준 (엔지니어가 고친 금액 포함)
   window.laborFeeNameNow = function() {
-    const el = document.getElementById('laborFee');
-    const v = el ? parseInt(el.value, 10) : NaN;
-    return window.laborFeeNameFor(isNaN(v) ? window.laborFeeBase() : v);
-  };
-  // (v101) 금액표 공임비 줄의 '근거' 글자 — 왜 이 금액인지 엔지니어가 바로 보게
-  //   예) 사용부품 · 업데이트 작업 / 불량명 · 모터 불량 B / 불량명 · 무증상 없음 / 기본
-  window.laborFeeReasonText = function(p) {
-    p = p || window.laborFeePick();
-    if (!p) return '기본';
-    if (p.rule === 1) return '사용부품 · ' + (p.label || '');
-    if (p.rule === 2) {
-      const k = p.kind === 'grade' ? (p.grade || '')
-        : p.kind === 'none' ? '없음'
-        : p.kind === 'custom' ? (window.laborFeeGradeOfAmount(p.fee) || '직접')   // 예전에 숫자로 넣은 20000·30000은 A·B로
-        : '미설정';
-      return '불량명 · ' + (p.label || '') + (k ? ' ' + k : '');
-    }
-    return '기본';
+    const p = window.laborFeePick();
+    return (p && p.name) ? p.name : window.LABOR_FEE_NAME;
   };
 
   // 사용부품이 바뀔 때마다 공임비 숨은값을 다시 맞춘다
@@ -30322,7 +30062,6 @@
 
     if (typeof renderQtyTable === 'function') renderQtyTable();
     if (typeof updateTreatmentContent === 'function') updateTreatmentContent();
-    try { window.updatePrintSubmitBtn(); } catch (e) {}   // (v103) 박스 구매·수령방식이 바뀌면 출력 후 단계 표시도 갱신
   };
 
   // 폼에 저장된 케이스의 요금 복원 (수정 모드 / 임시저장 불러오기)
@@ -30370,9 +30109,7 @@
       boxFeeSel: _feeGet('boxFeeSel') || '',
       boxFee: parseInt(_feeGet('boxFee')) || 0,
       laborFee: parseInt(_feeGet('laborFee')) || 0,
-      // (v101) 줄 이름은 저장되는 최종 금액으로 정한다 (30,000원 → 공임비 B)
-      laborFeeName: (typeof window.laborFeeNameFor === 'function')
-        ? window.laborFeeNameFor(parseInt(_feeGet('laborFee')) || 0) : window.LABOR_FEE_NAME
+      laborFeeName: (typeof window.laborFeeNameNow === 'function') ? window.laborFeeNameNow() : window.LABOR_FEE_NAME
     };
   };
 
@@ -31452,15 +31189,15 @@
     // (v93) 공임비 행 — 유상 건 자동 추가. 줄 삭제 불가, 금액만 수정 가능.
     if (laborVal > 0 || _rulesNow.isPaid) {
       totalAmount += laborVal;
-      // (v101) 기본 금액은 확정 규칙(laborFeePick)으로, 줄 이름은 최종 금액으로 정한다
-      //        근거(왜 이 금액인지)를 줄 옆에 작게 보여 준다
-      const _laborPick = window.laborFeePick();
-      const _laborBase = _laborPick ? (Number(_laborPick.fee) || 0) : window.LABOR_FEE_DEFAULT;
-      const _laborName = laborVal > 0 ? window.laborFeeNameFor(laborVal) : '공임비';
-      const _laborWhy = window.laborFeeReasonText(_laborPick);
+      // (v95) 작업 항목에 따라 기본 금액·이름이 달라진다
+      const _laborBase = window.laborFeeBase();
+      const _laborName = window.laborFeeNameNow();
+      const _laborRule = window.laborFeeRuleFromParts(
+        (typeof window._formGetSelectedParts === 'function') ? window._formGetSelectedParts() : []
+      );
       const _laborEdited = (laborVal !== _laborBase);
       html += `<div class="qty-row fee-row" style="background:#eef2ff;">
-        <div class="qty-name">🛠️ ${escapeHtml(_laborName)} <span style="font-size:10px;color:#6366f1;font-weight:700;">자동</span><span title="공임비 근거" style="font-size:10px;color:#0f766e;font-weight:700;margin-left:4px;">근거 · ${escapeHtml(_laborWhy)}</span></div>
+        <div class="qty-name">🛠️ ${escapeHtml(_laborName)} <span style="font-size:10px;color:#6366f1;font-weight:700;">자동</span>${_laborRule ? `<span style="font-size:10px;color:#0f766e;font-weight:700;margin-left:4px;">${escapeHtml(_laborRule.keyword)}</span>` : ''}</div>
         <div class="qty-rack"><span style="color:#9ca3af;">-</span></div>
         <div class="qty-price">${formatPrice(_laborBase)}</div>
         <div style="text-align:center;font-size:11px;font-weight:700;">1</div>
@@ -32449,11 +32186,6 @@
       if (data.type === 'AS' && typeof data.dailySeq === 'number' && data.dailySeq > maxSeq) {
         maxSeq = data.dailySeq;
       }
-      // (v102) 종류가 바뀐 건이어도 번호 글자(AS-날짜-NNN)가 쓰였으면 그 번호는 건너뛴다
-      if (String(d.id).startsWith(prefix + '-')) {
-        const n = parseInt(String(d.id).slice(prefix.length + 1), 10);
-        if (!isNaN(n) && n > maxSeq) maxSeq = n;
-      }
     });
     const nextSeq = maxSeq + 1;
 
@@ -32492,7 +32224,6 @@
       repairType: document.getElementById('repairType')?.value || '',
       deliveryFee: document.getElementById('deliveryFee')?.value || '',
       ...window.feeCollectForm(),   // (v93) 공임비/택배비타입/박스비
-      happycallRequested: ((document.getElementById('happycallReq') || {}).value === 'yes'),   // (v103)
       receiveType: document.getElementById('receiveType')?.value || '',
       treatmentContent: (document.getElementById('treatmentContent')?.value || '').trim(),
       // 필드명: 정식 접수와 동일하게 'notes' (입력 elem은 notesContent)
@@ -32636,14 +32367,7 @@
         payload.dailySeq = dailySeq;       // 정식 접수와 동일한 순번 필드 — generateCaseId가 이걸로 max 찾음
       }
 
-      if (isExistingDraft) {
-        await setDoc(doc(db, 'cases', draftId), payload, { merge: true });
-      } else {
-        // (v102) 새 임시저장도 같은 번호가 이미 있으면 덮어쓰거나 섞지 않고 새 번호로 저장
-        const _dr = await window.saveCaseWithRetry(draftId, payload, 3, { isNew: true });
-        if (!_dr.ok) throw (_dr.error || new Error('임시저장 실패'));
-        if (_dr.caseId && _dr.caseId !== draftId) { draftId = _dr.caseId; dailySeq = payload.dailySeq; datePart = payload.createdDate; }
-      }
+      await setDoc(doc(db, 'cases', draftId), payload, { merge: true });
 
       // (v18) 옵티미스틱 캐시 갱신 — onSnapshot 도착 전이라도 화면 즉시 반영
       try {
@@ -32808,47 +32532,14 @@
   //   팝업 차단을 피하려고 클릭 순간 빈 창을 먼저 연 뒤, 저장이 끝나면 그 창에 내역서를 그린다.
   //   저장이 실패하거나 입력이 빠져 등록이 안 되면 창을 닫는다.
   // 확인창 (굵은 글씨를 쓰려고 브라우저 기본 confirm 대신 직접 그림)
-  // (v103) 출력 후 단계 판정 — 접수 폼의 수리유형·수령방식·해피콜 요청·박스 구매로 정한다
-  //   무상 + 해피콜 요청 안 함 + 박스 미구매  → 출력 + 바로 완료
-  //   유상 / 해피콜 요청함 / 박스 구매         → 출력 + 해피콜 대기 (평소 접수 흐름)
-  //   방문AS 직접수령                           → 지금처럼 자동 완료   (확인요청은 출력 없음)
-  window.printDecide = function() {
-    const val = id => ((document.getElementById(id) || {}).value || '');
-    const rt = val('repairType'), recv = val('receiveType');
-    const visit = rt.indexOf('방문AS') === 0;
-    const paid = rt.includes('유상');
-    const hc = val('happycallReq') === 'yes';
-    const box = parseInt(val('boxFee')) || 0;
-    if (rt === '확인요청') return { print: false, kind: 'wait', why: '' };
-    if (visit && recv === '직접수령') return { print: true, kind: 'done', why: '방문AS 직접수령은 자동으로 완료됩니다' };
-    if (paid) return { print: true, kind: 'wait', why: '유상 건은 입금 안내가 필요해서 해피콜로 넘어갑니다' };
-    if (box > 0) return { print: true, kind: 'wait', why: '박스를 구매한 건은 해피콜 요청과 관계없이 해피콜로 넘어갑니다' };
-    if (hc) return { print: true, kind: 'wait', why: '해피콜을 요청해서 해피콜로 넘어갑니다' };
-    return { print: true, kind: 'done', why: '해피콜이 필요 없는 무상 건이라 바로 완료됩니다' };
-  };
-
-  window.hcSet = function(v) {
-    const yes = (v === 'yes');
-    const el = document.getElementById('happycallReq'); if (el) el.value = yes ? 'yes' : 'no';
-    document.querySelectorAll('#happycallReqOpts .toggle-btn').forEach(b => b.classList.toggle('active', b.getAttribute('data-hc') === (yes ? 'yes' : 'no')));
-    try { window.updatePrintSubmitBtn(); } catch (e) {}
-  };
-  window.hcRestore = function(c) { window.hcSet(c && c.happycallRequested ? 'yes' : 'no'); };
-  try {
-    const _hcOpts = document.getElementById('happycallReqOpts');
-    if (_hcOpts) _hcOpts.addEventListener('click', function(e) {
-      const b = e.target && e.target.closest ? e.target.closest('[data-hc]') : null;
-      if (b) window.hcSet(b.getAttribute('data-hc'));
-    });
-  } catch (e) {}
-
-  function _printConfirm(pd) {
-    const bold = t => '<b style="font-size:16.5px;font-weight:800;">' + t + '</b>';
-    // (v103) 결과(바로 완료 / 해피콜 대기)에 맞춰 문구를 바꾼다
-    const msg = pd.kind === 'done'
-      ? '접수를 등록하고 ' + bold('수리내역서를 출력') + '합니다.<br><br>' + bold('해피콜 없이 바로 완료') + ' 처리됩니다. '
-        + '고객에게 안내가 필요한 건이면 ' + bold('취소') + ' 후 ' + bold('해피콜 요청함') + '을 선택해주세요.'
-      : '접수를 등록하고 ' + bold('수리내역서를 출력') + '합니다.<br><br>' + bold('해피콜 대기') + '로 넘어갑니다. (' + pd.why + ')';
+  function _printConfirm(isPaid) {
+    // (v98) 유상은 완료 처리가 아니라 평소대로 접수된다 — 문구를 다르게
+    const msg = isPaid
+      ? '접수를 등록하고 <b style="font-size:16.5px;font-weight:800;">수리내역서를 출력</b>합니다.<br><br>'
+        + '유상 건이므로 <b style="font-size:16.5px;font-weight:800;">완료 처리되지 않습니다.</b> '
+        + '평소처럼 <b style="font-size:16.5px;font-weight:800;">해피콜</b>로 넘어갑니다.'
+      : '수리내역서를 출력 시 <b style="font-size:16.5px;font-weight:800;">완료</b>로 처리됩니다.<br><br>'
+        + '만약 고객에게 안내가 필요한 건이면 <b style="font-size:16.5px;font-weight:800;">취소</b> 후 <b style="font-size:16.5px;font-weight:800;">접수 등록하기</b>로 접수해주세요.';
     return new Promise(resolve => {
       const ov = document.createElement('div');
       ov.style.cssText = 'position:fixed;inset:0;z-index:99980;background:rgba(15,23,42,.55);display:flex;align-items:center;justify-content:center;padding:16px;';
@@ -32869,11 +32560,13 @@
   window.submitFormPrint = async function() {
     if (window._submitPrintMode) return; // 이미 진행 중
     const rt = (document.getElementById('repairType') || {}).value || '';
-    if (!(rt === '무상' || rt === '방문AS 무상' || rt.includes('유상'))) {
-      showToast('수리내역 출력은 확인요청 건을 제외한 AS 건만 가능합니다', 'error');
+    // (v98) 유상도 출력 가능 — 단, 유상은 완료 처리 없이 평소 접수 흐름 그대로
+    const _isPaid = rt.includes('유상');
+    if (!(rt === '무상' || rt === '방문AS 무상' || _isPaid)) {
+      showToast('수리내역 출력은 무상·유상 AS 건만 가능합니다 (확인요청 제외)', 'error');
       return;
     }
-    if (!(await _printConfirm(window.printDecide()))) return;
+    if (!(await _printConfirm(_isPaid))) return;
     const pbtn = document.getElementById('printSubmitBtn');
     if (pbtn) pbtn.disabled = true;
     window._submitPrintMode = true;
@@ -32886,28 +32579,18 @@
     }
     const done = window._lastPrintSubmit;
     window._lastPrintSubmit = null;
-    // 저장 성공한 경우에만 내역서 표시 — (v103) 내역서가 뜨면 인쇄창도 바로 연다
-    if (done) window.dashPrintRepairReport(done, { autoPrint: true });
+    if (done) window.dashPrintRepairReport(done); // 저장 성공한 경우에만 내역서 표시
   };
 
   // 출력 버튼 표시: [접수 등록하기]가 보이고, 수리유형이 무상·유상일 때 (확인요청은 제외)
-  //   (v103) 출력 버튼이 주 버튼 — 버튼 아래에 출력 후 단계를 보여주고, [접수 등록하기]는 감춘다.
+  //   (v98) 유상 추가 — 무상은 '출력 = 완료', 유상은 '출력 + 평소대로 접수'
   window.updatePrintSubmitBtn = function() {
     const pbtn = document.getElementById('printSubmitBtn');
     const sbtn = document.getElementById('submitBtn');
     if (!pbtn || !sbtn) return;
     const rt = (document.getElementById('repairType') || {}).value || '';
     const canPrint = (rt === '무상' || rt === '방문AS 무상' || rt.includes('유상'));
-    const show = !!(canPrint && sbtn.style.display !== 'none' && !window._editModeCaseId);
-    pbtn.hidden = !show;
-    const hcb = document.getElementById('happycallReqBlock');
-    if (hcb) hcb.hidden = !show;
-    if (pbtn.parentElement) pbtn.parentElement.classList.toggle('print-main', show);
-    if (show) {
-      const pd = window.printDecide();
-      pbtn.innerHTML = '🖨️ 접수 + 수리내역 출력<small>→ ' + (pd.kind === 'done' ? '바로 완료' : '해피콜 대기') + '</small>';
-      pbtn.style.background = pd.kind === 'done' ? '#0f766e' : '#b45309';
-    }
+    pbtn.hidden = !(canPrint && sbtn.style.display !== 'none' && !window._editModeCaseId);
   };
   try {
     const _sb = document.getElementById('submitBtn');
@@ -33153,12 +32836,9 @@
       }
 
       // (v89) [🖨️ 수리내역 출력] — 무상 건은 수리내역서를 출력하고 해피콜 없이 바로 완료
-      // (v103) 무상 + 해피콜 요청 안 함 + 박스 미구매일 때만 바로 완료. 유상·해피콜 요청·박스 구매는 출력 + 평소 흐름(해피콜 대기)
-      const _printOn = (window._submitPrintMode === true) && repairType !== '확인요청';
-      const _pd = window.printDecide();
-      const _printComplete = _printOn && !isPaidType && _pd.kind === 'done';
-      // (v98) 완료가 아닌 출력은 수리내역서만 출력하고 stage·완료 처리는 손대지 않는다 — 평소 접수 흐름 그대로
-      const _printPaidOnly = _printOn && !_printComplete;
+      const _printComplete = (window._submitPrintMode === true) && !isPaidType && repairType !== '확인요청';
+      // (v98) 유상은 수리내역서만 출력하고 stage·완료 처리는 손대지 않는다 — 평소 접수 흐름 그대로
+      const _printPaidOnly = (window._submitPrintMode === true) && isPaidType && repairType !== '확인요청';
       if (_printComplete && !isDirectReceive) {
         stage = '해피콜완료';
         actionStatus = [];
@@ -33173,8 +32853,6 @@
         statusByHappycall: '', // 해피콜이 설정하는 단순 status
         statusByEngineer: '',  // 엔지니어가 설정하는 단순 status
         repairType,
-        // (v103) 해피콜 요청 여부 — 출력 후 단계 판정에 쓰고, 이후 분석용으로 남긴다
-        happycallRequested: ((document.getElementById('happycallReq') || {}).value === 'yes'),
         // 택배비 / 수령방식 (해당 케이스만 값 있음)
         deliveryFee: deliveryFee ? parseInt(deliveryFee) : 0,
         // (v93) 공임비 · 택배비 타입 · 박스비 분리 저장
@@ -33355,15 +33033,7 @@
       }
 
       // (v85) 저장 실패해도 접수가 증발하지 않도록 — 3회 재시도 후 브라우저에 보관
-      // (v102) 임시저장에서 이어 쓰는 접수는 같은 번호에 덮어쓰는 게 정상 → isNew:false. 새 접수는 번호 중복을 막는다
-      const _saveRes = await window.saveCaseWithRetry(caseId, caseData, 3, { isNew: !draftIdToDelete });
-      if (_saveRes.caseId && _saveRes.caseId !== caseId) {
-        // 번호가 겹쳐 새 번호로 바뀐 경우 — 저장 성공이든 실패(보관)든 바뀐 번호를 쓴다
-        const _oldId = caseId;
-        caseId = _saveRes.caseId;
-        seq = caseData.dailySeq;
-        if (_saveRes.ok) showToast(`접수번호 ${_oldId} 가 이미 사용 중이라 ${caseId} 로 저장했습니다`, 'info');
-      }
+      const _saveRes = await window.saveCaseWithRetry(caseId, caseData, 3);
       if (!_saveRes.ok) {
         const _msg = (_saveRes.error && _saveRes.error.message) || String(_saveRes.error || '알 수 없는 오류');
         window.pendingSubmitAdd(caseId, caseData, _msg);
@@ -33397,7 +33067,7 @@
       if (_printComplete) {
         showToast('접수 완료 — 수리내역서 출력 → 완료', 'success');
       } else if (_printPaidOnly) {
-        showToast('접수 등록 — 수리내역서 출력 (완료 처리 안 됨, 해피콜 대기로 진행)', 'success');
+        showToast('접수 등록 — 수리내역서 출력 (유상: 완료 처리 안 됨, 해피콜로 진행)', 'success');
       } else if (erpProcessed) {
         showToast('접수 완료 (직접수령 → 자동 해피콜완료)', 'success');
       } else {
@@ -33459,7 +33129,6 @@
 
     // 택배비 / 수령방식 / 안내박스 초기화
     document.getElementById('receiveType').value = '';
-    if (typeof window.hcSet === 'function') window.hcSet('no');   // (v103) 해피콜 요청 → 기본값(요청 안 함)
     window._feeClearForm();   // (v93) 택배비/박스비/공임비 초기화
     document.querySelectorAll('#deliveryFeeField .toggle-btn').forEach(b => b.classList.remove('active'));
     document.querySelectorAll('#receiveTypeField .toggle-btn').forEach(b => b.classList.remove('active'));
@@ -34774,9 +34443,9 @@
 
       // 3. 새 케이스 ID 생성 (newType 기준)
       window._erpCurrentType = newType;
-      let newCaseId = await generateErpCaseId();   // (v102) 저장 때 번호가 겹치면 바뀔 수 있어 let
+      const newCaseId = await generateErpCaseId();
       const today = new Date();
-      const createdDate = newCaseId.split('-')[1];   // (v102) 한국 날짜 — 예전엔 세계표준시(toISOString)라 새벽에 하루 어긋났다
+      const createdDate = today.toISOString().slice(0, 10).replace(/-/g, '');
 
       // 4. 기존 이력 복사 + 전환 이력 추가
       const prevHistory = Array.isArray(c.statusHistory) ? c.statusHistory : [];
@@ -34826,10 +34495,7 @@
         updatedAt: serverTimestamp()
       };
 
-      // (v102) 같은 번호가 이미 있으면 덮어쓰지 않고 새 번호로 저장
-      const _swapRes = await window.saveCaseWithRetry(newCaseId, newCaseData, 3, { isNew: true });
-      if (!_swapRes.ok) throw (_swapRes.error || new Error('전환 저장 실패'));
-      newCaseId = _swapRes.caseId || newCaseId;
+      await setDoc(doc(db, 'cases', newCaseId), newCaseData);
 
       // 6. 백업에 새 케이스 ID 업데이트
       await setDoc(doc(db, 'deletedCases', c._docId || c.id), { replacedBy: newCaseId }, { merge: true });
@@ -35010,7 +34676,7 @@
 
     try {
       // 접수ID 생성 — 한글 prefix (교환- / 반품-) + type별 일련번호
-      let caseId = await generateErpCaseId();   // (v102) 저장 때 번호가 겹치면 바뀔 수 있어 let
+      const caseId = await generateErpCaseId();
       const parts = caseId.split('-');
       const datePart = parts[1];  // yyyyMMdd
       const seq = parseInt(parts[2], 10);  // NNN
@@ -35189,12 +34855,7 @@
       };
 
       // (v85) 저장 실패해도 접수가 증발하지 않도록 — 3회 재시도 후 브라우저에 보관
-      const _saveRes2 = await window.saveCaseWithRetry(caseId, caseData, 3, { isNew: true });
-      if (_saveRes2.caseId && _saveRes2.caseId !== caseId) {
-        const _oldId2 = caseId;
-        caseId = _saveRes2.caseId;
-        if (_saveRes2.ok) showToast(`접수번호 ${_oldId2} 가 이미 사용 중이라 ${caseId} 로 저장했습니다`, 'info');
-      }
+      const _saveRes2 = await window.saveCaseWithRetry(caseId, caseData, 3);
       if (!_saveRes2.ok) {
         const _msg2 = (_saveRes2.error && _saveRes2.error.message) || String(_saveRes2.error || '알 수 없는 오류');
         window.pendingSubmitAdd(caseId, caseData, _msg2);
@@ -35245,13 +34906,7 @@
       getDocs(query(collection(db, "deletedCases"), where("createdDate", "==", datePart)))
     ]);
     let maxSeq = 0;
-    const extractSeq = (data, docId) => {
-      // (v102) 문서 번호 글자(교환-날짜-NNN)가 쓰였으면 종류가 바뀐 건(교환→반품 전환)이어도 그 번호는 건너뛴다
-      //   — 예전에는 종류가 같은 건만 세서, 전환된 건의 번호를 새 접수가 또 받아 앞 건을 덮어썼다
-      if (docId && String(docId).startsWith(prefix + '-')) {
-        const n0 = parseInt(String(docId).slice(prefix.length + 1), 10);
-        if (!isNaN(n0) && n0 > maxSeq) maxSeq = n0;
-      }
+    const extractSeq = (data) => {
       // dailySeq 필드 우선, 없으면 ID에서 파싱
       if (data.type === erpType) {
         if (typeof data.dailySeq === 'number' && data.dailySeq > maxSeq) {
@@ -35264,25 +34919,11 @@
         }
       }
     };
-    snap.forEach(d => extractSeq(d.data(), d.id));
-    deletedSnap.forEach(d => extractSeq(d.data(), d.id));
+    snap.forEach(d => extractSeq(d.data()));
+    deletedSnap.forEach(d => extractSeq(d.data()));
     const nextSeq = maxSeq + 1;
     return `${prefix}-${String(nextSeq).padStart(3, '0')}`;
   }
-
-  // (v102) 번호가 겹쳤을 때 새 번호를 받는 공통 함수 — saveCaseWithRetry 가 부른다
-  window.caseIdRegen = async function (type) {
-    if (type === '교환' || type === '반품') {
-      const prev = window._erpCurrentType;
-      window._erpCurrentType = type;
-      try {
-        const id = await generateErpCaseId();
-        const p = id.split('-');
-        return { id, seq: parseInt(p[2], 10), datePart: p[1] };
-      } finally { window._erpCurrentType = prev; }
-    }
-    return await generateCaseId();
-  };
 
   // 모든 ERP 첨부 (defect + normal) 합쳐서 반환
   function getAllErpAttachments() {
