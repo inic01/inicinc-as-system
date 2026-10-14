@@ -4805,7 +4805,8 @@
     Timestamp,
     getCountFromServer,
     writeBatch,
-    runTransaction
+    runTransaction,
+    documentId
   } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
   // (v25) 이메일 링크 2단계 인증용 — Firebase Authentication SDK (Cloud Functions/SendGrid 불필요)
   import {
@@ -5216,7 +5217,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v103';
+  const APP_VERSION = 'v104';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -5379,7 +5380,7 @@
           return { ok: true, caseId, renumbered: false };
         }
         // 번호가 겹치면 새 번호로 바꿔 다시 시도 (최대 8번 — 동시에 여러 명이 접수해도 충분)
-        for (let r = 0; r < 8; r++) {
+        for (let r = 0; r < 30; r++) {
           const ref = doc(db, 'cases', caseId);
           const res = await runTransaction(db, async (tx) => {
             const snap = await tx.get(ref);
@@ -5392,7 +5393,13 @@
           }
           // 같은 번호의 다른 접수가 이미 있다 → 새 번호 발급 후 다시
           console.warn('[접수번호 중복] ' + caseId + ' 는 이미 다른 접수가 사용 중 → 새 번호를 받습니다');
-          const gen = await window.caseIdRegen(caseData.type);
+          let gen = await window.caseIdRegen(caseData.type);
+          // (v104) 번호를 새로 세도 같은 번호가 또 나오면(날짜 칸이 빠진 문서가 그 번호를 쥐고 있을 때) 포기하지 않고 번호를 하나 올린다
+          //   — 2026-10-14 AS-20261014-025 에 상태값만 든 문서가 남아 접수가 전부 막혔던 일
+          if (gen && gen.id && gen.id === caseId) {
+            const _m = String(caseId).match(/^(.*-)(\d+)$/);
+            if (_m) { const _n = parseInt(_m[2], 10) + 1; gen = { id: _m[1] + String(_n).padStart(_m[2].length, '0'), seq: _n, datePart: caseData.createdDate }; }
+          }
           if (!gen || !gen.id || gen.id === caseId) throw new Error('새 접수번호를 받지 못했습니다');
           if (!renumberedFrom) renumberedFrom = caseId;
           caseId = gen.id;
@@ -5409,6 +5416,21 @@
       }
     }
     return { ok: false, error: lastErr, caseId };
+  };
+
+  // (v104) 이미 있는 접수에만 값을 덧쓴다 — 삭제된 접수에 상태 변경이 들어와도 빈 껍데기 문서를 새로 만들지 않는다
+  //   (예전: setDoc(..., {merge:true}) 는 문서가 없으면 새로 만들어 버렸다)
+  window.caseMergeIfExists = async function (docId, data) {
+    const ref = doc(db, 'cases', docId);
+    await runTransaction(db, async (tx) => {
+      const snap = await tx.get(ref);
+      if (!snap.exists()) {
+        const err = new Error('이미 삭제되었거나 없는 접수입니다. 화면을 새로고침해 주세요');
+        err.code = 'case-missing';
+        throw err;
+      }
+      tx.set(ref, data, { merge: true });
+    });
   };
 
   // 실패했을 때 화면을 덮는 경고 (닫기 없음 — 절대 그냥 못 지나감)
@@ -10639,7 +10661,7 @@
           updateData.erpPartsUploadedAt = serverTimestamp();
           updateData.erpPartsUploadedBy = 'system (자동: 사용부품 없음 — ERP누락복구)';
         }
-        await setDoc(doc(db, 'cases', (c._docId || c.id)), updateData, { merge: true });
+        await window.caseMergeIfExists((c._docId || c.id), updateData);
         ok++;
       } catch (e) {
         console.error('fixErpParts 실패:', c.id, e);
@@ -20080,7 +20102,7 @@
         updateData.statusHistory = [...(c.statusHistory || []), historyEntry];
       }
 
-      await setDoc(doc(db, 'cases', (c._docId || c.id)), updateData, { merge: true });
+      await window.caseMergeIfExists((c._docId || c.id), updateData);
 
       // 깜빡임 효과 (로컬 표시)
       const cardRow = document.querySelector(`.dash-card-row[onclick*="${docId}"]`);
@@ -20147,7 +20169,7 @@
       else if (role === 'engineer') updateData.statusByEngineer = '';
       else if (role === 'legacy') updateData.status = '';
 
-      await setDoc(doc(db, 'cases', (c._docId || c.id)), updateData, { merge: true });
+      await window.caseMergeIfExists((c._docId || c.id), updateData);
       showToast('상태 삭제 완료', 'success');
     } catch (e) {
       console.error('상태 삭제 실패:', e);
@@ -23391,7 +23413,7 @@
         }
       }
 
-      await setDoc(doc(db, 'cases', (c._docId || c.id)), updateData, { merge: true });
+      await window.caseMergeIfExists((c._docId || c.id), updateData);
       showToast(`✅ ${c.id} 전산입력 완료 처리`, 'success');
       setTimeout(() => window.renderErpWork(), 300);
     } catch (e) {
@@ -23444,7 +23466,7 @@
         note: `${m.label} ${before.toLocaleString()}원 → ${after.toLocaleString()}원`
       }];
       update.updatedAt = serverTimestamp();
-      await setDoc(doc(db, 'cases', (c._docId || c.id)), update, { merge: true });
+      await window.caseMergeIfExists((c._docId || c.id), update);
       // 화면 즉시 반영
       c[m.field] = after;
       c.feeEditLog = update.feeEditLog;
@@ -25723,7 +25745,7 @@
           updatedAt: serverTimestamp()
         };
         if (_rows) _payload.erpPartsRows = _rows;
-        await setDoc(doc(db, 'cases', cid), _payload, { merge: true });
+        await window.caseMergeIfExists(cid, _payload);
 
         // (v18) dashAllCases 캐시도 즉시 옵티미스틱 갱신 — onSnapshot 도착 전 화면 반영
         if (Array.isArray(window.dashAllCases)) {
@@ -26877,7 +26899,7 @@
         // 레거시 status는 손대지 않음 (있으면 그대로 둠)
       }
 
-      await setDoc(doc(db, 'cases', (c._docId || c.id)), updateData, { merge: true });
+      await window.caseMergeIfExists((c._docId || c.id), updateData);
       // 로컬 캐시 즉시 갱신 (onSnapshot 도착 전에도 최신 상태 반영)
       const cacheIdx = dashAllCases.findIndex(x => x.id === c.id);
       if (cacheIdx >= 0) Object.assign(dashAllCases[cacheIdx], updateData);
@@ -28603,7 +28625,7 @@
     }
 
     try {
-      await setDoc(doc(db, 'cases', (c._docId || c.id)), updateData, { merge: true });
+      await window.caseMergeIfExists((c._docId || c.id), updateData);
 
       // (v15) 재고 차감 동기화 — partsUsed 변화분만큼 inventory 조정
       if (typeof window.inventoryDeductFromCase === 'function') {
@@ -32444,6 +32466,15 @@
     const snap = await getDocs(q);
 
     let maxSeq = 0;
+    // (v104) 날짜 칸이 없는 문서도 번호(문서 이름)로 찾아서 센다 — 읽기에 실패해도 접수는 계속 진행
+    try {
+      const idSnap = await getDocs(query(collection(db, "cases"),
+        where(documentId(), ">=", prefix + "-"), where(documentId(), "<", prefix + ".")));
+      idSnap.forEach(d => {
+        const n = parseInt(String(d.id).slice(prefix.length + 1), 10);
+        if (!isNaN(n) && n > maxSeq) maxSeq = n;
+      });
+    } catch (e) { console.warn('[번호 세기] 문서이름 범위 조회 실패 — 날짜 기준으로만 센다', e && e.message); }
     snap.forEach(d => {
       const data = d.data();
       if (data.type === 'AS' && typeof data.dailySeq === 'number' && data.dailySeq > maxSeq) {
@@ -35266,6 +35297,15 @@
     };
     snap.forEach(d => extractSeq(d.data(), d.id));
     deletedSnap.forEach(d => extractSeq(d.data(), d.id));
+    // (v104) 날짜 칸이 없는 문서도 번호(문서 이름)로 찾아서 센다 — 읽기에 실패해도 접수는 계속 진행
+    try {
+      const idSnap = await getDocs(query(collection(db, "cases"),
+        where(documentId(), ">=", prefix + "-"), where(documentId(), "<", prefix + ".")));
+      idSnap.forEach(d => {
+        const n = parseInt(String(d.id).slice(prefix.length + 1), 10);
+        if (!isNaN(n) && n > maxSeq) maxSeq = n;
+      });
+    } catch (e) { console.warn('[번호 세기] 문서이름 범위 조회 실패 — 날짜 기준으로만 센다', e && e.message); }
     const nextSeq = maxSeq + 1;
     return `${prefix}-${String(nextSeq).padStart(3, '0')}`;
   }
