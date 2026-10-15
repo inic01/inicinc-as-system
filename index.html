@@ -30287,6 +30287,9 @@
     const recv = (document.getElementById('receiveType') || {}).value || '';
     const prod = (document.getElementById('productName') || {}).value || '';
     const r = window.feeRules(rt, recv);
+    // (v106) 수리유형이 바뀌면 직접 적은 택배비는 버린다 (무상에서 적은 금액이 유상에 따라가지 않게)
+    if (window._feeLastRt != null && window._feeLastRt !== rt && window._feeEdit) window._feeEdit.ship = null;
+    window._feeLastRt = rt;
     const altAmt = window.altShipFeeForProduct(prod);
 
     field.classList.toggle('open', !!r.show);
@@ -30317,6 +30320,31 @@
       '<div class="toggle-btn fee-btn' + (shipType === '' ? ' active' : '') + '" data-shiptype="">없음<span class="fee-amount">0원</span></div>';
     }
 
+    // --- (v106) 무상 택배비 직접입력 — 무상은 기본 0원이지만 필요하면 금액을 직접 적을 수 있다 ---
+    let manualWrap = document.getElementById('shipManualWrap');
+    if (!manualWrap && shipOpts && shipOpts.parentNode) {
+      manualWrap = document.createElement('div');
+      manualWrap.id = 'shipManualWrap';
+      manualWrap.style.cssText = 'margin-top:8px;font-size:13px;color:#92400e;display:none;align-items:center;gap:6px;flex-wrap:wrap;';
+      manualWrap.innerHTML = '✍️ 택배비 직접입력 <input type="number" min="0" step="100" id="shipManualInput" placeholder="0" style="width:100px;text-align:right;border:1.5px solid #fcd34d;border-radius:5px;padding:4px 6px;font-size:13px;background:#fffbeb;font-weight:700;color:#92400e;">원 <span style="color:#6b7280;font-size:12px;">(무상 건도 택배비를 받아야 할 때 입력)</span>';
+      shipOpts.parentNode.insertBefore(manualWrap, shipOpts.nextSibling);
+      const mi = manualWrap.querySelector('input');
+      const commitManual = function() {
+        const raw = mi.value.trim();
+        if (raw === '') window._feeEdit.ship = null;
+        else { let v = parseInt(raw); if (isNaN(v) || v < 0) v = 0; window._feeEdit.ship = v; }
+        setTimeout(window.feeRenderForm, 0);
+      };
+      mi.addEventListener('change', commitManual);
+      mi.addEventListener('blur', commitManual);
+    }
+    if (manualWrap) {
+      const showManual = showShip && shipFree && window.FREE_AS_SHIP_CHARGE !== true;
+      manualWrap.style.display = showManual ? 'flex' : 'none';
+      const mi2 = manualWrap.querySelector('input');
+      if (mi2 && document.activeElement !== mi2) mi2.value = (showManual && window._feeEdit.ship != null && window._feeEdit.ship > 0) ? String(window._feeEdit.ship) : '';
+    }
+
     // --- 대체품 택배비 (무상 + 대체품 대상 제품) ---
     //     무상도 택배비 타입을 묻는 정책이면 대체품 칸은 필요 없다
     const showAlt = r.show && !askShipType && altAmt > 0;
@@ -30335,7 +30363,8 @@
     let shipFee = 0;
     if (r.show) {
       if (askShipType) {
-        shipFee = shipType ? (window._feeEdit.ship != null ? window._feeEdit.ship : window.shipFeeBase(shipType, r.half, shipFree)) : 0;
+        shipFee = shipType ? (window._feeEdit.ship != null ? window._feeEdit.ship : window.shipFeeBase(shipType, r.half, shipFree))
+          : ((shipFree && window._feeEdit.ship != null) ? window._feeEdit.ship : 0);   // (v106) 무상은 타입 없이 직접입력 가능
       } else {
         shipFee = (altSel === '1') ? (window._feeEdit.ship != null ? window._feeEdit.ship : altAmt) : 0;
       }
@@ -31437,7 +31466,7 @@
     const _rulesNow = window.feeRules(_rtNow, _recvNow);
     const feeLabel = _shipTypeVal
       ? (_shipTypeVal + '타입' + (_rulesNow.half ? ' · 편도' : ' · 왕복'))
-      : '대체품';
+      : ((_rtNow === '무상' && window.FREE_AS_SHIP_FEE === true) ? '직접입력' : '대체품');
 
     // 선택된 포장재 모두 표시 (가격 0이어도 행은 표시, 합계엔 0원으로 합산)
     // selectedPackaging은 이름 배열 — 마스터에서 가격/기본수량 조회
