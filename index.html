@@ -5217,7 +5217,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v104';
+  const APP_VERSION = 'v106';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -19217,25 +19217,41 @@
         q = query(collection(db, 'cases'), where('erpPartsUploaded', '==', false), orderBy('createdAt', 'desc'), limit(1000));
       }
 
-      dashUnsubscribe = onSnapshot(q, (snapshot) => {
-        dashAllCases = [];
-        snapshot.forEach(doc => {
-          const data = doc.data() || {};
-          // (5번) 완료접수내역으로 이동한 건(ERP 처리 + 사용부품 업로드 완료)은
-          //       대시보드 메인에서 어차피 안 보이므로 dashAllCases에 담지 않는다.
-          //       → 진행 중 건이 limit에 밀려 사라지던 문제 해결 + 메모리/렌더 절감.
-          //       (완료접수내역 화면은 별도 쿼리로 로드하므로 영향 없음)
-          if (data.stage === '해피콜완료' && data.erpProcessed === true && data.erpPartsUploaded === true) {
-            return; // 완전 완료 → 제외
-          }
-          dashAllCases.push({ ...data, _docId: doc.id });
-        });
+      // (v105) 진행 중 단계는 날짜·건수 한도와 상관없이 항상 불러온다
+      //   — 해피콜·조장·팀장·마스터는 최신 1,000건만 불러와서, 9/3 이전 접수는 진행 중이어도 이 사람들 화면에서만 사라졌다
+      //   (2026-10-14 AS-20260828-158: 담당 엔지니어 화면에는 보이고 CS 화면에는 안 보임, 불러온 건수 1000 · 가장 오래된 접수 9/3 로 확인)
+      //   → 본 구독(최신 1,000건) + 진행 중 단계 구독(한도 없음)을 합쳐서 보여준다. 엔지니어는 기존 방식 그대로.
+      const _needActiveSub = (role !== 'engineer');
+      const _mainMap = new Map(), _activeMap = new Map();
+      const _isFullyDone = (data) => (data.stage === '해피콜완료' && data.erpProcessed === true && data.erpPartsUploaded === true);
+      const _tms = (c) => { const x = c && c.createdAt; return (x && typeof x.toMillis === 'function') ? x.toMillis() : (x && x.seconds ? x.seconds * 1000 : 0); };
+      const _rebuild = () => {
+        const merged = new Map();
+        _mainMap.forEach((v, k) => merged.set(k, v));
+        _activeMap.forEach((v, k) => merged.set(k, v));
+        dashAllCases = Array.from(merged.values());
+        if (_activeMap.size > 0) dashAllCases.sort((a, b) => _tms(b) - _tms(a));   // 본 구독과 같은 최신순 유지
         window.dashAllCases = dashAllCases;
         dashUpdateStats();
         dashRenderList();
         if (typeof renderSidebarCatTabs === 'function') {
           renderSidebarCatTabs();
         }
+      };
+      const _unsubMain = onSnapshot(q, (snapshot) => {
+        _mainMap.clear();
+        snapshot.forEach(doc => {
+          const data = doc.data() || {};
+          // (5번) 완료접수내역으로 이동한 건(ERP 처리 + 사용부품 업로드 완료)은
+          //       대시보드 메인에서 어차피 안 보이므로 dashAllCases에 담지 않는다.
+          //       → 진행 중 건이 limit에 밀려 사라지던 문제 해결 + 메모리/렌더 절감.
+          //       (완료접수내역 화면은 별도 쿼리로 로드하므로 영향 없음)
+          if (_isFullyDone(data)) {
+            return; // 완전 완료 → 제외
+          }
+          _mainMap.set(doc.id, { ...data, _docId: doc.id });
+        });
+        _rebuild();
       }, (err) => {
         console.error('Firestore 구독 오류:', err);
         // (v85) 엔지니어 완료건 제외 쿼리에 복합 인덱스가 없으면 자동으로 예전 방식 복귀
@@ -19249,6 +19265,29 @@
           try { dashStartRealtimeSync(); } catch (e3) { console.error(e3); }
         }
       });
+      let _unsubActive = null;
+      if (_needActiveSub) {
+        try {
+          // 단계 하나만 조건으로 걸어서 복합 인덱스가 필요 없다. 완료(erpPartsUploaded=true)·해피콜완료는 여기서 제외
+          _unsubActive = onSnapshot(
+            query(collection(db, 'cases'), where('stage', 'in', ['수리대기', '입금대기', '해피콜대기', '처리대기', '확인요청'])),
+            (snap) => {
+              _activeMap.clear();
+              snap.forEach(doc => {
+                const data = doc.data() || {};
+                if (data.erpPartsUploaded !== false) return;        // 본 구독과 같은 기준(진행 중만)
+                if (_isFullyDone(data)) return;
+                _activeMap.set(doc.id, { ...data, _docId: doc.id });
+              });
+              _rebuild();
+            },
+            (err2) => { console.warn('[dashSync] 진행 중 단계 구독 실패 — 최신 1,000건만 표시합니다', err2 && err2.message); }
+          );
+        } catch (e4) { console.warn('[dashSync] 진행 중 단계 구독 시작 실패', e4 && e4.message); }
+      }
+      // 구독 해제 함수 하나로 묶는다 (슬립·재시작에서 dashUnsubscribe() 로 한 번에 끈다)
+      const _unsubMainFn = _unsubMain;
+      dashUnsubscribe = () => { try { _unsubMainFn(); } catch (e) {} try { if (_unsubActive) _unsubActive(); } catch (e) {} };
     } catch (e) {
       console.error('실시간 동기화 시작 실패:', e);
     }
@@ -29923,14 +29962,19 @@
   //  - 공임비: 유상(방문AS 유상 포함) 건에 20,000원 자동. 줄 삭제 불가, 금액만 수정 가능.
   //  - 택배비: A/B/C/D/E/S/F 타입에서 선택 (왕복). 방문AS + 택배수령이면 편도(절반).
   //            무상은 택배비를 묻지 않음 — 대체품 대상 제품(분유포트)만 대체품 택배비.
-  //  - 박스비: 9,000 / 12,000 / 미구매 중 선택.
+  //  - 박스비: 8,000(A·B·C) / 11,000(D·S·F) / 미구매 중 선택. (2026.10 개정 — 택배 타입에 맞는 쪽에 '추천' 표시, 선택은 직접)
+  //  - 2026.10 개정: 보증기간 내(무상) 택배비는 받지 않는다(0원). 경과(유상)는 기존 금액.
   //  - 확인요청, 방문AS + 직접수령: 택배비·박스비 모두 없음.
   window.SHIP_FEE_TYPES = [
     { k: 'A', v: 6400 }, { k: 'B', v: 6400 }, { k: 'C', v: 6400 },
     { k: 'D', v: 12000 }, { k: 'E', v: 12000 }, { k: 'S', v: 12000 },
     { k: 'F', v: 22000 }
   ];
-  window.BOX_FEE_OPTIONS = [9000, 12000];
+  window.BOX_FEE_OPTIONS = [8000, 11000];
+  // (v106) 택배비 타입별 추천 박스 금액 — E타입은 정책표에 없어 추천 없음
+  window.BOX_FEE_BY_TYPE = { A: 8000, B: 8000, C: 8000, D: 11000, S: 11000, F: 11000 };
+  // (v106) 보증기간 내(무상) 택배비를 실제로 받을지. false = 0원(무상). 다시 받으려면 true.
+  window.FREE_AS_SHIP_CHARGE = false;
   // ============================================================
   // (v101) 공임비 금액 — 여기 한 곳에서만 관리한다 (2026-09-29 확정)
   //   A = 30분 이내, B = 30~60분. 금액을 바꿀 때는 fee 숫자만 고치면 된다.
@@ -30222,7 +30266,8 @@
     return { rt: rt, recv: recv, isVisit: isVisit, isPaid: isPaid, half: half, show: show };
   };
 
-  window.shipFeeBase = function(typeKey, half) {
+  window.shipFeeBase = function(typeKey, half, isFree) {
+    if (isFree && window.FREE_AS_SHIP_CHARGE !== true) return 0;
     const t = window.SHIP_FEE_TYPES.find(function(s) { return s.k === typeKey; });
     if (!t) return 0;
     return half ? Math.round(t.v / 2) : t.v;
@@ -30256,6 +30301,7 @@
     // --- 택배비 타입 (유상 / 일반 무상. '방문AS 무상'은 제외) ---
     const askShipType = r.isPaid || (r.rt === '무상' && window.FREE_AS_SHIP_FEE === true);
     const showShip = r.show && askShipType;
+    const shipFree = (r.rt === '무상');   // (v106) 보증기간 내 — 택배비 무상
     const shipBlock = document.getElementById('shipTypeBlock');
     if (shipBlock) shipBlock.style.display = showShip ? '' : 'none';
     const modeLabel = document.getElementById('shipModeLabel');
@@ -30266,7 +30312,7 @@
     if (shipOpts) {
       shipOpts.innerHTML = window.SHIP_FEE_TYPES.map(function(t) {
         return '<div class="toggle-btn fee-btn' + (shipType === t.k ? ' active' : '') + '" data-shiptype="' + t.k + '">' +
-               t.k + '타입<span class="fee-amount">' + window.shipFeeBase(t.k, r.half).toLocaleString() + '원</span></div>';
+               t.k + '타입<span class="fee-amount">' + (shipFree && window.FREE_AS_SHIP_CHARGE !== true ? '무상' : window.shipFeeBase(t.k, r.half, shipFree).toLocaleString() + '원') + '</span></div>';
       }).join('') +
       '<div class="toggle-btn fee-btn' + (shipType === '' ? ' active' : '') + '" data-shiptype="">없음<span class="fee-amount">0원</span></div>';
     }
@@ -30289,7 +30335,7 @@
     let shipFee = 0;
     if (r.show) {
       if (askShipType) {
-        shipFee = shipType ? (window._feeEdit.ship != null ? window._feeEdit.ship : window.shipFeeBase(shipType, r.half)) : 0;
+        shipFee = shipType ? (window._feeEdit.ship != null ? window._feeEdit.ship : window.shipFeeBase(shipType, r.half, shipFree)) : 0;
       } else {
         shipFee = (altSel === '1') ? (window._feeEdit.ship != null ? window._feeEdit.ship : altAmt) : 0;
       }
@@ -30305,9 +30351,16 @@
     if (!r.show) boxSel = '';
     const boxOpts = document.getElementById('boxFeeOpts');
     if (boxOpts) {
-      boxOpts.innerHTML = window.BOX_FEE_OPTIONS.map(function(v) {
-        return '<div class="toggle-btn fee-btn' + (boxSel === String(v) ? ' active' : '') + '" data-boxfee="' + v + '">📦 구매<span class="fee-amount">' + v.toLocaleString() + '원</span></div>';
+      const recBox = (shipType && window.BOX_FEE_BY_TYPE[shipType]) || 0;   // (v106) 추천 금액
+      const optList = window.BOX_FEE_OPTIONS.slice();
+      // 예전에 저장된 금액(9,000·12,000 등)은 '기존 금액' 버튼으로 남겨 값이 사라지지 않게 한다
+      const legacyBox = (boxSel && boxSel !== '0' && optList.indexOf(parseInt(boxSel)) < 0) ? parseInt(boxSel) : 0;
+      boxOpts.innerHTML = optList.map(function(v) {
+        return '<div class="toggle-btn fee-btn' + (boxSel === String(v) ? ' active' : '') + '" data-boxfee="' + v + '">📦 구매' +
+               (recBox === v ? ' <span class="fee-rec" style="font-size:11px;color:#d97706;font-weight:700">추천</span>' : '') +
+               '<span class="fee-amount">' + v.toLocaleString() + '원</span></div>';
       }).join('') +
+      (legacyBox ? '<div class="toggle-btn fee-btn active" data-boxfee="' + legacyBox + '">📦 기존 금액<span class="fee-amount">' + legacyBox.toLocaleString() + '원</span></div>' : '') +
       '<div class="toggle-btn fee-btn' + (boxSel === '0' ? ' active' : '') + '" data-boxfee="0">미구매<span class="fee-amount">0원</span></div>';
     }
     const boxFee = (r.show && boxSel && boxSel !== '0')
