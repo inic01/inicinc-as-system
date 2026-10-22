@@ -4182,7 +4182,7 @@
           <div class="toggle-btn fee-btn" data-hc="yes">해피콜 요청함<span class="fee-amount">고객 안내·확인이 필요한 건</span></div>
           <div class="toggle-btn fee-btn active" data-hc="no">요청 안 함<span class="fee-amount">기본값</span></div>
         </div>
-        <div style="font-size:11px; color:var(--text-light); margin-top:6px; line-height:1.5;">유상 건과 박스 구매 건은 "요청 안 함"이어도 해피콜 대기로 넘어갑니다.</div>
+        <div style="font-size:11px; color:var(--text-light); margin-top:6px; line-height:1.5;">유상 건, 박스 구매 건, 택배비가 있는 건은 "요청 안 함"이어도 해피콜 대기로 넘어갑니다.</div>
         <input type="hidden" id="happycallReq" value="no">
       </div>
 
@@ -5217,7 +5217,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v106';
+  const APP_VERSION = 'v107';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -21654,7 +21654,7 @@
           // 무상 + 택배비 있으면 → 입금대기
           buttons.push({
             id: 'actFreeHCToDeposit',
-            label: '💳 해피콜완료 (박스구매 비용) → 입금대기',
+            label: '💳 해피콜완료 (택배비·박스 비용) → 입금대기',
             bg: '#2563eb',
             action: () => dashActionPaidHappycallToDeposit(c)
           });
@@ -32932,10 +32932,11 @@
     const paid = rt.includes('유상');
     const hc = val('happycallReq') === 'yes';
     const box = parseInt(val('boxFee')) || 0;
+    const ship = parseInt(val('deliveryFee')) || 0;   // (v106) 택배비도 받을 돈이므로 박스비와 같이 취급
     if (rt === '확인요청') return { print: false, kind: 'wait', why: '' };
     if (visit && recv === '직접수령') return { print: true, kind: 'done', why: '방문AS 직접수령은 자동으로 완료됩니다' };
     if (paid) return { print: true, kind: 'wait', why: '유상 건은 입금 안내가 필요해서 해피콜로 넘어갑니다' };
-    if (box > 0) return { print: true, kind: 'wait', why: '박스를 구매한 건은 해피콜 요청과 관계없이 해피콜로 넘어갑니다' };
+    if (box > 0 || ship > 0) return { print: true, kind: 'wait', why: '박스비·택배비가 있는 건은 해피콜 요청과 관계없이 해피콜(비용 안내) → 입금대기로 진행됩니다' };
     if (hc) return { print: true, kind: 'wait', why: '해피콜을 요청해서 해피콜로 넘어갑니다' };
     return { print: true, kind: 'done', why: '해피콜이 필요 없는 무상 건이라 바로 완료됩니다' };
   };
