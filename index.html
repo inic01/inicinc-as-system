@@ -5217,7 +5217,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v107';
+  const APP_VERSION = 'v108';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -26632,9 +26632,9 @@
         </div>
         <div style="padding:20px 22px;">
           <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px 14px;margin-bottom:16px;font-size:12px;color:#7f1d1d;line-height:1.6;">
-            ⚠️ <b>영구 삭제됩니다.</b><br>
-            지정한 기간 안에 <b>완료된(전산+부품업로드 둘 다 완료)</b> 케이스만 삭제됩니다.<br>
-            진행 중 케이스는 삭제되지 않습니다. ERP에 모든 내역이 보관되어 있으므로 복구 시 ERP를 참조하세요.
+            ⚠️ <b>완료 접수내역에서 삭제됩니다.</b><br>
+            지정한 기간에 <b>완료된(전산+부품업로드 둘 다 완료)</b> 케이스만 삭제됩니다. 진행 중 케이스는 삭제되지 않습니다.<br>
+            삭제 전에 <b>deletedCases에 사본이 저장</b>되어 필요하면 복구할 수 있습니다. (기간은 완료일 기준)
           </div>
           <div style="display:flex;gap:8px;margin-bottom:14px;">
             <div style="flex:1;">
@@ -26654,7 +26654,7 @@
           </div>
           <div style="display:flex;gap:8px;">
             <button type="button" id="completedDelPreviewBtn" style="flex:1;padding:10px;background:#fff;color:#92400e;border:1px solid #f59e0b;border-radius:8px;font-size:13px;font-weight:700;cursor:pointer;">🔍 미리보기</button>
-            <button type="button" id="completedDelExecuteBtn" disabled style="flex:1;padding:10px;background:#9ca3af;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:not-allowed;">🗑️ 영구 삭제</button>
+            <button type="button" id="completedDelExecuteBtn" disabled style="flex:1;padding:10px;background:#9ca3af;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:700;cursor:not-allowed;">🗑️ 삭제</button>
           </div>
         </div>
       </div>
@@ -26669,7 +26669,18 @@
     const executeBtn = document.getElementById('completedDelExecuteBtn');
     let previewTargets = [];
 
-    previewBtn.addEventListener('click', () => {
+    // (v108) 대상은 화면에 올라온 목록이 아니라 Firestore에서 직접 찾는다.
+    //   (대시보드는 완료 건을 불러오지 않아서 예전엔 항상 '0건'이었다)
+    //   접수일이 종료일 이하인 완료 건을 접수일 순으로 500건씩 읽고, 완료일이 기간 안인 것만 남긴다.
+    const SCAN_CAP = 10000;
+    const compTime = x => {
+      let d = null;
+      if (x.erpPartsUploadedAt && x.erpPartsUploadedAt.toDate) d = x.erpPartsUploadedAt.toDate();
+      else if (x.erpProcessedAt && x.erpProcessedAt.toDate) d = x.erpProcessedAt.toDate();
+      else if (x.createdAt && x.createdAt.toDate) d = x.createdAt.toDate();
+      return d;
+    };
+    previewBtn.addEventListener('click', async () => {
       const startVal = document.getElementById('completedDelStart').value;
       const endVal = document.getElementById('completedDelEnd').value;
       if (!endVal) {
@@ -26678,75 +26689,110 @@
       }
       const startDate = startVal ? new Date(startVal + 'T00:00:00') : new Date(0);
       const endDate = new Date(endVal + 'T23:59:59');
-
-      // 대상: 둘 다 완료 + 완료일이 기간 안
-      previewTargets = (window.dashAllCases || []).filter(x => {
-        if (x.stage !== '해피콜완료') return false;
-        if (x.erpProcessed !== true) return false;
-        if (x.erpPartsUploaded !== true) return false;
-        // 완료 시간
-        let d = null;
-        if (x.erpPartsUploadedAt && x.erpPartsUploadedAt.toDate) d = x.erpPartsUploadedAt.toDate();
-        else if (x.erpProcessedAt && x.erpProcessedAt.toDate) d = x.erpProcessedAt.toDate();
-        else if (x.createdAt && x.createdAt.toDate) d = x.createdAt.toDate();
-        if (!d) return false;
-        return d >= startDate && d <= endDate;
-      });
-
       const preview = document.getElementById('completedDelPreview');
-      if (previewTargets.length === 0) {
-        preview.innerHTML = '<span style="color:#10b981;font-weight:600;">✓ 해당 기간에 삭제할 케이스가 없습니다</span>';
-        executeBtn.disabled = true;
-        executeBtn.style.background = '#9ca3af';
-        executeBtn.style.cursor = 'not-allowed';
-      } else {
-        // 종류별 카운트
-        const byType = {};
-        previewTargets.forEach(t => {
-          let k = t.type;
-          if (t.type === 'AS') {
-            const rt = t.repairType || '';
-            if (rt === '확인요청') k = '확인요청AS';
-            else if (rt.includes('유상')) k = '유상AS';
-            else k = '무상AS';
-          }
-          byType[k] = (byType[k] || 0) + 1;
-        });
-        const breakdown = Object.entries(byType).map(([k, v]) => `${k} ${v}건`).join(', ');
-        preview.innerHTML = `<span style="color:#dc2626;font-weight:700;">🗑️ 삭제 대상: ${previewTargets.length}건</span><div style="font-size:11px;color:#6b7280;margin-top:4px;">${escapeHtml(breakdown)}</div>`;
-        executeBtn.disabled = false;
-        executeBtn.style.background = '#dc2626';
-        executeBtn.style.cursor = 'pointer';
+      previewBtn.disabled = true;
+      executeBtn.disabled = true; executeBtn.style.background = '#9ca3af'; executeBtn.style.cursor = 'not-allowed';
+      preview.innerHTML = '<span style="color:#6b7280;">⏳ 삭제 대상을 찾는 중...</span>';
+      previewTargets = [];
+      let scanned = 0, capped = false;
+      try {
+        let last = null;
+        while (true) {
+          const qy = last
+            ? query(collection(db, 'cases'), where('erpPartsUploaded', '==', true), where('createdAt', '<=', Timestamp.fromDate(endDate)), orderBy('createdAt', 'asc'), startAfter(last), limit(500))
+            : query(collection(db, 'cases'), where('erpPartsUploaded', '==', true), where('createdAt', '<=', Timestamp.fromDate(endDate)), orderBy('createdAt', 'asc'), limit(500));
+          const snap = await getDocs(qy);
+          if (snap.empty) break;
+          snap.forEach(d => {
+            const x = d.data() || {};
+            scanned++;
+            if (x.stage !== '해피콜완료' || x.erpProcessed !== true || x.erpPartsUploaded !== true) return;
+            const t = compTime(x);
+            if (!t || t < startDate || t > endDate) return;
+            previewTargets.push({ ...x, _docId: d.id });
+          });
+          last = snap.docs[snap.docs.length - 1];
+          if (snap.size < 500) break;
+          if (scanned >= SCAN_CAP) { capped = true; break; }
+        }
+      } catch (e) {
+        console.error('삭제 대상 조회 실패:', e);
+        preview.innerHTML = '<span style="color:#dc2626;font-weight:600;">조회 실패: ' + escapeHtml(String(e.message || e)) + '</span>';
+        previewBtn.disabled = false;
+        return;
       }
+      previewBtn.disabled = false;
+
+      if (previewTargets.length === 0) {
+        preview.innerHTML = '<span style="color:#10b981;font-weight:600;">✓ 해당 기간에 삭제할 케이스가 없습니다</span>' +
+          (capped ? '<div style="font-size:11px;color:#b45309;margin-top:4px;">⚠️ ' + SCAN_CAP.toLocaleString() + '건까지만 확인했습니다. 기간을 좁혀 다시 확인하세요.</div>' : '');
+        return;
+      }
+      const byType = {};
+      previewTargets.forEach(t => {
+        let k = t.type;
+        if (t.type === 'AS') {
+          const rt = t.repairType || '';
+          if (rt === '확인요청') k = '확인요청AS';
+          else if (rt.includes('유상')) k = '유상AS';
+          else k = '무상AS';
+        }
+        byType[k] = (byType[k] || 0) + 1;
+      });
+      const breakdown = Object.entries(byType).map(([k, v]) => `${k} ${v}건`).join(', ');
+      preview.innerHTML = `<span style="color:#dc2626;font-weight:700;">🗑️ 삭제 대상: ${previewTargets.length}건</span><div style="font-size:11px;color:#6b7280;margin-top:4px;">${escapeHtml(breakdown)}</div>` +
+        `<div style="font-size:11px;color:#6b7280;margin-top:4px;">삭제 전에 deletedCases에 사본이 저장됩니다.</div>` +
+        (capped ? '<div style="font-size:11px;color:#b45309;margin-top:4px;">⚠️ ' + SCAN_CAP.toLocaleString() + '건까지만 확인했습니다. 삭제 후 다시 미리보기를 눌러 남은 건을 확인하세요.</div>' : '');
+      executeBtn.disabled = false;
+      executeBtn.style.background = '#dc2626';
+      executeBtn.style.cursor = 'pointer';
     });
 
     executeBtn.addEventListener('click', async () => {
       if (previewTargets.length === 0) return;
       const startVal = document.getElementById('completedDelStart').value || '(시작 없음)';
       const endVal = document.getElementById('completedDelEnd').value;
-      const ok1 = confirm(`${previewTargets.length}건을 영구 삭제하시겠습니까?\n\n기간: ${startVal} ~ ${endVal}\n\n⚠️ 이 작업은 되돌릴 수 없습니다.`);
+      const ok1 = confirm(`${previewTargets.length}건을 삭제하시겠습니까?\n\n기간: ${startVal} ~ ${endVal}\n\n삭제 전에 deletedCases에 사본이 저장됩니다.`);
       if (!ok1) return;
-      const ok2 = confirm(`정말 삭제하시겠습니까?\n\n다시 한 번 확인합니다 — ${previewTargets.length}건이 영구적으로 사라집니다.`);
+      const ok2 = confirm(`정말 삭제하시겠습니까?\n\n다시 한 번 확인합니다 — ${previewTargets.length}건이 목록에서 사라집니다.`);
       if (!ok2) return;
 
+      let done = 0;
       try {
         executeBtn.disabled = true;
-        executeBtn.textContent = '⏳ 삭제 중...';
+        previewBtn.disabled = true;
         executeBtn.style.background = '#9ca3af';
-        let done = 0;
-        for (const tc of previewTargets) {
-          await deleteDoc(doc(db, 'cases', tc.id));
-          done++;
+        // 200건씩 묶어서 (사본 저장 + 원본 삭제 = 400쓰기) 처리. 사본이 먼저 저장된 건만 지워진다.
+        const CHUNK = 200;
+        const delBy = NAS_USER || '관리자';
+        const delRole = window._currentUserRole || 'master';
+        const reason = '완료 접수내역 기간 지정 삭제 (' + startVal + ' ~ ' + endVal + ')';
+        for (let i = 0; i < previewTargets.length; i += CHUNK) {
+          const part = previewTargets.slice(i, i + CHUNK);
+          const batch = writeBatch(db);
+          part.forEach(tc => {
+            const backup = { ...tc, originalDocId: tc._docId, deletedAt: serverTimestamp(),
+              deletedBy: delBy, deletedByRole: delRole, deleteReason: reason, bulkPeriodDelete: true };
+            delete backup._docId;
+            batch.set(doc(collection(db, 'deletedCases')), backup);
+            batch.delete(doc(db, 'cases', tc._docId));
+          });
+          await batch.commit();
+          done += part.length;
+          executeBtn.textContent = '⏳ 삭제 중... ' + done + '/' + previewTargets.length;
         }
-        showToast(`✅ ${done}건 영구 삭제 완료`, 'success');
+        showToast(`✅ ${done}건 삭제 완료 (deletedCases에 사본 저장됨)`, 'success');
         close();
-        setTimeout(() => window.renderCompletedList(), 300);
+        window._completedListState.loaded = false;
+        setTimeout(() => { try { window.loadCompletedListData(true).then(() => window.renderCompletedList()); } catch (e) { window.renderCompletedList(); } }, 300);
       } catch (e) {
         console.error('삭제 실패:', e);
-        showToast('삭제 실패: ' + (e.message || e), 'error');
+        showToast(`삭제 실패 (${done}건 처리 후 중단): ` + (e.message || e), 'error');
         executeBtn.disabled = false;
-        executeBtn.textContent = '🗑️ 영구 삭제';
+        previewBtn.disabled = false;
+        executeBtn.textContent = '🗑️ 삭제';
         executeBtn.style.background = '#dc2626';
+        previewTargets = previewTargets.slice(done);
       }
     });
   };
