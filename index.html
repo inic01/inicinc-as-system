@@ -5217,9 +5217,19 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v108';
+  const APP_VERSION = 'v116';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
+
+  // ============================================================
+  // (v110) 입금 자동확인 비상 스위치
+  //   true  = 입금자명·금액이 접수 건과 정확히 맞으면 시스템이 [입금완료]를 대신 눌러 다음 단계로 보낸다.
+  //   false = 자동 확정만 끈다. ('입금내역 확인 필요' 표시와 문자 선택 확인 창은 그대로 동작)
+  //   문제가 생기면 이 값을 false 로 바꿔 올리면 된다. (예전처럼 담당자가 [입금완료]를 직접 누르면 됨)
+  // ============================================================
+  window.DEPOSIT_AUTO_CONFIRM = true;
+  // (v114) 유형별 입금 처리 방식: 'auto' = 이름·금액 일치 시 자동 이동 / 'check' = 자동 안 함, '입금내역 확인 필요'로 담당자가 선택 / 'off' = 표시도 안 함(기존 방식)
+  window.DEPOSIT_AUTO_POLICY = { free: 'auto', paid: 'check', exchange: 'auto', returns: 'auto', bosang: 'check', hairdryer: 'off', discard: 'off', addreq: 'off' };
 
   // ============================================================
   // (v85) 글자 "끌어다 놓기" 차단 — 화면이 멈추는 현상의 원인
@@ -19517,6 +19527,7 @@
 
   // 카드 리스트 렌더링
   window.dashRenderList = function() {
+    try { if (typeof window._depAutoSchedule === 'function') window._depAutoSchedule(); } catch (e) {}   // (v110) 입금 자동확인 예약
     // (v18) 첫 렌더 시 — 권한별 기본 필터 강제 적용 (사용자 클릭 전까지)
     if (!window._dashTypeFiltersInitialized) {
       const role = window._currentUserRole || 'engineer';
@@ -19684,6 +19695,17 @@
         if (stageName === '수리대기' && (c.stage === '임시저장' || c._isDraft === true)) return true;
         return false;
       });
+      // (v111) 해피콜대기: 답변완료(재검수·확인요청·협의)로 돌아온 건은 맨 위에, 돌아온 시각이 최근인 순서로
+      if (stageName === '해피콜대기' && stageItems.length > 1) {
+        const _ret = (c) => {
+          const h = Array.isArray(c.statusHistory) ? c.statusHistory : [];
+          const l = h[h.length - 1];
+          if (!l || l.toStage !== '해피콜대기' || !/답변완료/.test(String(l.action || ''))) return 0;
+          const t = Date.parse(l.changedAt || ''); return isNaN(t) ? 1 : t;
+        };
+        const _idx = new Map(stageItems.map((c, i) => [c, i]));
+        stageItems.sort((a, b) => { const ra = _ret(a), rb = _ret(b); if (ra || rb) { if (!ra) return 1; if (!rb) return -1; return rb - ra; } return _idx.get(a) - _idx.get(b); });
+      }
       const count = stageItems.length;
       // 접힘 결정:
       // - dashFocusedStage가 있으면: 그 stage만 펼치고 나머지는 모두 접음
@@ -19867,13 +19889,14 @@
     const happycallBtn = `<button type="button" class="card-status-btn ${happycallEnabled ? 'active' : 'inactive'}" onclick="event.stopPropagation();dashOpenStatusModal('${cardDocId}','happycall')" ${happycallEnabled ? '' : 'disabled'} title="해피콜 상태 변경">📞 +상태</button>`;
     const engineerBtn = `<button type="button" class="card-status-btn ${engineerEnabled ? 'active' : 'inactive'}" onclick="event.stopPropagation();dashOpenStatusModal('${cardDocId}','engineer')" ${engineerEnabled ? '' : 'disabled'} title="엔지니어 상태 변경">🔧 +상태</button>`;
 
+    const _depDecor = (typeof window.depCardDecor === 'function') ? window.depCardDecor(c) : { style: '', chip: '' };   // (v110)
     return `
-      <div class="dash-stage-card" onclick="dashOpenModal('${cardDocId}')">
+      <div class="dash-stage-card" onclick="dashOpenModal('${cardDocId}')" ${_depDecor.style ? `style="${_depDecor.style}"` : ''}>
         <div class="card-line-1">
           <span class="card-id">${escapeHtml(c.id || '-')}</span>
           ${typeLabelHtml}
           ${actionStatusHtml}
-          ${statusLabelHtml}
+          ${statusLabelHtml}${_depDecor.chip}
           ${isTest ? '<span class="dash-card-test-mark">TEST</span>' : ''}
           <span class="card-time-right">${escapeHtml(time)}</span>
         </div>
@@ -21745,6 +21768,7 @@
       });
     }
 
+    if (typeof window.depSwapPayButtons === 'function') window.depSwapPayButtons(c, buttons);   // (v110) 입금내역 확인 필요
     if (buttons.length === 0) {
       btnsEl.innerHTML = '';
       if (noteWrapEl) noteWrapEl.style.display = 'none';
@@ -21903,9 +21927,9 @@
   }
 
   // (v26) 유상/박스구매 헤어드라이어: 입금대기 → [입금완료] → 처리대기 (교환으로 전환)
-  async function dashActionHairDryerPayDone(c) {
+  async function dashActionHairDryerPayDone(c, auto) {
     await dashApplyStageChange(c, '처리대기', {
-      note: dashGetActionNote(),
+      note: (auto && auto.note != null) ? auto.note : dashGetActionNote(),
       role: 'happycall',
       actionLabel: '입금완료',
       actionStatusOp: 'replace-deposit',
@@ -22057,7 +22081,7 @@
   }
 
   // (2026-09-02) 폐기 건 입금대기 → [입금완료 + 폐기동의서 회신완료] → 처리대기
-  async function dashActionASDiscardPayDone(c) {
+  async function dashActionASDiscardPayDone(c, auto) {
     if (!confirm(
       '입금과 폐기동의서 회신을 모두 확인하셨나요?\n\n' +
       '처리대기로 이동하며 상태에 다음 두 가지가 기록됩니다.\n' +
@@ -22066,7 +22090,7 @@
     )) return;
 
     await dashApplyStageChange(c, '처리대기', {
-      note: dashGetActionNote(),
+      note: (auto && auto.note != null) ? auto.note : dashGetActionNote(),
       role: 'happycall',
       actionLabel: '입금완료',
       actionStatusOp: 'replace-deposit',
@@ -22092,9 +22116,10 @@
     });
   }
   // 보상판매 입금완료 → 처리대기
-  async function dashActionASBosangPayDone(c) {
+  async function dashActionASBosangPayDone(c, auto) {
     await dashApplyStageChange(c, '처리대기', {
-      note: dashGetActionNote(),
+      note: (auto && auto.note != null) ? auto.note : dashGetActionNote(),
+      ...(auto && auto.quiet ? { quiet: true, changedBy: auto.changedBy } : {}),
       role: 'happycall', actionLabel: '보상판매 입금완료',
       actionStatusOp: 'append', actionStatusValue: '보상판매 입금완료'
     });
@@ -22298,6 +22323,7 @@
     }
 
     // 그려주기
+    if (typeof window.depSwapPayButtons === 'function') window.depSwapPayButtons(c, buttons);   // (v110) 입금내역 확인 필요
     if (buttons.length === 0) {
       const info = document.createElement('div');
       info.style.cssText = 'width:100%;padding:10px;background:#f9fafb;color:#9ca3af;border:1px dashed #e5e7eb;border-radius:8px;font-size:12px;text-align:center;';
@@ -22345,10 +22371,11 @@
   }
 
   // 해피콜대기/입금대기 → 처리대기 이동 (실행 업무 단계)
-  async function dashActionERToProcess(c, label) {
-    const note = dashGetActionNote();
+  async function dashActionERToProcess(c, label, auto) {
+    const note = (auto && auto.note != null) ? auto.note : dashGetActionNote();
     await dashApplyStageChange(c, '처리대기', {
       note,
+      ...(auto && auto.quiet ? { quiet: true, changedBy: auto.changedBy } : {}),
       role: 'happycall',
       actionLabel: label || '처리대기로 이동',
       actionStatusOp: 'append',
@@ -26931,7 +26958,7 @@
     try {
       const historyEntry = {
         changedAt: new Date().toISOString(),
-        changedBy: NAS_USER || '관리자',
+        changedBy: opts.changedBy || NAS_USER || '관리자',
         role: role,
         fromStage: c.stage || '',
         toStage: newStage,
@@ -26945,7 +26972,7 @@
         stage: newStage,
         actionStatus: newActionStatus,
         statusUpdatedAt: serverTimestamp(),
-        statusUpdatedBy: NAS_USER || '관리자',
+        statusUpdatedBy: opts.changedBy || NAS_USER || '관리자',
         updatedAt: serverTimestamp(),
         statusHistory: [...(c.statusHistory || []), historyEntry],
       }, extraFields);
@@ -26953,7 +26980,7 @@
       // (v20) 해피콜 역할 액션은 자동으로 해피콜 담당자 등록/갱신
       // — 마지막에 액션한 사람이 담당자 (덮어쓰기)
       // — 단, extraFields에 명시적으로 happycallStaff가 들어있으면 그 값을 우선 (이전 호환)
-      if (role === 'happycall' && NAS_USER && updateData.happycallStaff === undefined) {
+      if (role === 'happycall' && NAS_USER && !opts.changedBy && updateData.happycallStaff === undefined) {   // (v110) 자동 처리는 담당자를 바꾸지 않는다
         updateData.happycallStaff = NAS_USER;
       }
 
@@ -26988,8 +27015,10 @@
       // 로컬 캐시 즉시 갱신 (onSnapshot 도착 전에도 최신 상태 반영)
       const cacheIdx = dashAllCases.findIndex(x => x.id === c.id);
       if (cacheIdx >= 0) Object.assign(dashAllCases[cacheIdx], updateData);
-      showToast(`${actionLabel || '단계 변경'} 완료 → ${newStage}`, 'success');
-      dashCloseModal();
+      if (!opts.quiet) {   // (v110) 자동 처리(quiet)는 다른 사람이 보던 창을 닫지 않는다
+        showToast(`${actionLabel || '단계 변경'} 완료 → ${newStage}`, 'success');
+        dashCloseModal();
+      }
     } catch (e) {
       console.error('단계 변경 실패:', e);
       showToast('단계 변경 실패: ' + (e.message || e), 'error');
@@ -27070,16 +27099,16 @@
   }
 
   // 액션: 입금완료 → 무상 박스구매면 완료, 유상이면 수리대기
-  async function dashActionDepositDone(c) {
+  async function dashActionDepositDone(c, auto) {
     // (v81) 교환/반품은 '수리' 개념이 없음 — 입금완료 시 처리대기로 보낸다.
     //   입금내역 화면의 [입금완료 처리]/[🔗직접연결]도 이 함수를 타므로, 여기서 분기해야
     //   목록에서 처리해도 반품/교환이 수리대기가 아닌 '처리대기'로 정상 이동함.
     //   (케이스 모달의 반품/교환 흐름과 동일한 dashActionERToProcess 재사용 → 뒷 흐름 일치)
     //   원인: 조장이 입금내역 화면에서 반품 입금완료 시 AS 로직을 타 수리대기로 빠지던 버그.
     if (c.type === '교환' || c.type === '반품') {
-      return dashActionERToProcess(c, '입금완료');
+      return dashActionERToProcess(c, '입금완료', auto);
     }
-    const note = dashGetActionNote();
+    const note = (auto && auto.note != null) ? auto.note : dashGetActionNote();
     const repairType = c.repairType || '';
     const isPaid = repairType.includes('유상');
     // 무상 + 박스구매(택배비만) → 바로 완료
@@ -27092,6 +27121,7 @@
       actionLabel: '입금완료',
       actionStatusOp: 'replace-deposit',
       actionStatusValue: '입금완료',
+      ...(auto && auto.quiet ? { quiet: true, changedBy: auto.changedBy } : {}),
       extraFields: {
         depositConfirmedAt: serverTimestamp(),
         ...(isFreeBoxOnly ? {
@@ -27141,7 +27171,28 @@
     return total;
   };
 
-  function _depNorm(s) { return String(s || '').replace(/\s+/g, '').trim(); }
+  // (v110) 이름 비교: 공백 제거 + 끝의 '님' 한 글자 제거 + 소문자 ("홍길동님" = "홍길동")
+  function _depNorm(s) { return String(s || '').replace(/\s+/g, '').replace(/님$/, '').toLowerCase().trim(); }
+  // (v110) 입금자명 = 성함 + 휴대폰 뒤 4자리 ("홍길동1234"). 끝 4자리 숫자가 있으면 분리, 없으면 이름만.
+  function _depSplit(s) {
+    const t = String(s || '').replace(/\s+/g, '');
+    const m = /^(.*\D)(\d{4})$/.exec(t);
+    return m ? { base: _depNorm(m[1]), l4: m[2] } : { base: _depNorm(t), l4: '' };
+  }
+  function _depCaseL4(c) { const d = String(((c || {}).customer || {}).phone || '').replace(/\D/g, ''); return d.length >= 4 ? d.slice(-4) : ''; }
+  // (v114) 입금대기 한 건의 처리 방식 — 유형 판별 후 DEPOSIT_AUTO_POLICY에서 조회
+  function _depPolicy(c) {
+    const P = window.DEPOSIT_AUTO_POLICY || {};
+    let k;
+    if (c.isAddReq === true) k = 'addreq';
+    else if (window.isHairDryerIHD01 && window.isHairDryerIHD01(c) && !c.bosangSale) k = 'hairdryer';
+    else if (c.bosangSale) k = 'bosang';
+    else if (c.discardRequested) k = 'discard';
+    else if (c.type === '교환') k = 'exchange';
+    else if (c.type === '반품') k = 'returns';
+    else k = String(c.repairType || '').includes('유상') ? 'paid' : 'free';
+    return P[k] || 'off';
+  }
   function _depPendingCases() {
     const all = Array.isArray(window.dashAllCases) ? window.dashAllCases : [];
     return all.filter(c => c && c.stage === '입금대기');
@@ -27150,7 +27201,7 @@
   //  - byName: 아직 "입금대기"인 건 (→ [입금완료] 처리 가능)
   //  - byDone: 이미 입금완료로 넘어간 건 (→ 정보만 표시, 중복 입금/이미처리 확인용) (v78)
   function _depMatch(dep) {
-    const name = _depNorm(dep.name);
+    const name = _depSplit(dep.name).base;
     if (!name) return { byName: [], byDone: [] };
     const all = Array.isArray(window.dashAllCases) ? window.dashAllCases : [];
     const nameHit = all.filter(c => c && _depNorm((c.customer || {}).name) === name);
@@ -27175,16 +27226,40 @@
   }
 
   // 실시간 구독 시작 (로그인 후 1회) — 배지 숫자 + 화면 자동 갱신
+  // (v115) 처리가 끝난(done/ignored) 입금은 처리 7일 뒤 삭제 — 접속 후 1회, 한 번에 최대 100건. 실패해도 화면에는 영향 없음.
+  //   ※ 미처리(new) 입금과 처리시각(handledAt)이 없는 옛 기록은 건드리지 않는다.
+  window.DEPOSIT_KEEP_DAYS = 7;
+  async function _depCleanup() {
+    if (window._depCleanDone) return;
+    window._depCleanDone = true;
+    try {
+      const days = Number(window.DEPOSIT_KEEP_DAYS) || 0;
+      if (days < 1) return;
+      const cutoff = new Date(Date.now() - days * 86400000);
+      const snap = await getDocs(query(collection(db, 'incomingDeposits'), where('handledAt', '<', cutoff), limit(100)));
+      const del = snap.docs.filter(d => { const st = (d.data() || {}).status; return st === 'done' || st === 'ignored'; });
+      if (!del.length) return;
+      const batch = writeBatch(db);
+      del.forEach(d => batch.delete(d.ref));
+      await batch.commit();
+      console.log('입금내역 정리:', del.length + '건 삭제 (처리 ' + days + '일 경과)');
+    } catch (e) { console.warn('입금내역 정리 건너뜀:', e && e.message ? e.message : e); }
+  }
+
   window.startDepositWatch = function() {
     if (window._depositUnsub) return;
     try {
       const q = query(collection(db, 'incomingDeposits'), orderBy('receivedAt', 'desc'), limit(200));
       window._depositUnsub = onSnapshot(q, (snap) => {
         window._depositDocs = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
+        try { _depRebuildAutoMap(); } catch (e) {}
         _depUpdateBadge();
+        try { if (typeof window.dashRenderList === 'function') window.dashRenderList(); } catch (e) {}   // (v110) 확인 필요 표시 갱신
+        try { _depAutoSchedule(); } catch (e) {}
         const v = document.getElementById('dashViewDeposit');
         if (v && v.style.display !== 'none') _depPaint();
       }, (err) => { console.warn('입금내역 구독 오류:', err); });
+      setTimeout(_depCleanup, 20000);   // (v115)
     } catch (e) { console.warn('입금내역 구독 실패:', e); }
   };
 
@@ -27320,79 +27395,151 @@
     </style>`;
   }
 
+  // ==================== (v110) 입금내역 = 장부(표) 화면 ====================
+  //  · 입금 문자가 쌓이는 기록판. 확정·무시·직접연결 버튼 없음 (확정은 입금대기 카드에서)
+  //  · 남은 버튼: [확정 취소] (확정 직후 상태일 때만 되돌림)
+  window._ledQ = window._ledQ || '';
+  window._ledS = window._ledS || '';
+  function _ledTime(d) {
+    let t = d.smsTime || '';
+    if (!t && d.receivedAt) { const ms = _depMs(d.receivedAt); if (ms) { const x = new Date(ms); const p = n => String(n).padStart(2, '0'); t = x.getFullYear() + '-' + p(x.getMonth() + 1) + '-' + p(x.getDate()) + ' ' + p(x.getHours()) + ':' + p(x.getMinutes()); } }
+    return String(t).replace(/\//g, '-');
+  }
+  function _ledStatus(d, pend) {
+    if (d.status === 'done') return d.handledBy === '자동' ? { t: '자동확인', c: 'c-ok' } : { t: '확인완료', c: 'c-ok' };
+    if (d.status === 'ignored') return { t: '제외', c: 'c-wait' };
+    const amt = Number(d.amount) || 0, nm = _depSplit(d.name).base;
+    const hit = pend.some(p => (nm && p.nm === nm) || (p.exp > 0 && p.exp === amt));
+    return hit ? { t: '확인 필요', c: 'c-chk' } : { t: '연결 대기', c: 'c-wait' };
+  }
   function _depPaint() {
     const box = document.getElementById('depositContent');
     if (!box) return;
     _depUpdateBadge();
-    const active = (window._depositDocs || []).filter(d => d.status !== 'done' && d.status !== 'ignored');
-    const showSample = !!window._depShowSample;
-    const cards = [];
-    if (showSample) cards.push(_depSample());
-    active.forEach(d => cards.push(d));
-
-    const banner = `<div class="dep-info"><b>이렇게 동작합니다.</b> 법인폰에 기업은행 입금문자가 오면 자동으로 여기 목록에 뜹니다. 성함·금액이 맞는 <b>입금대기</b> 건을 자동으로 찾아주고, 확인 후 <b>[입금완료]</b>를 누르면 입금완료로 이동합니다.
-      <div class="dep-flow"><span class="c">📱 입금문자</span><span class="a">→</span><span class="c">🤖 자동 매칭</span><span class="a">→</span><span class="c">👀 사람 확인</span><span class="a">→</span><span class="c">✅ 입금완료</span></div></div>`;
-    // (v83) 매칭/미매칭 분리 — 입금대기 케이스와 이름이 매칭되는 건만 상단, 나머지(구성품 구매 등)는 접기
-    //   샘플(예시) 카드는 항상 상단에 표시
-    const matched = [];
-    const unmatched = [];
-    active.forEach(d => {
-      const m = _depMatch(d);
-      if (m.byName.length > 0 || m.byDone.length > 0) matched.push(d);
-      else unmatched.push(d);
+    const deps = (window._depositDocs || []).slice().sort((a, b) => (_depMs(b.receivedAt) - _depMs(a.receivedAt)) || String(_ledTime(b)).localeCompare(String(_ledTime(a))));
+    const pend = _depPendingCases().filter(c => _depPolicy(c) !== 'off').map(c => ({ nm: _depNorm((c.customer || {}).name), exp: Number(window._caseExpectedAmount(c)) || 0 }));
+    const all = Array.isArray(window.dashAllCases) ? window.dashAllCases : [];
+    const rowObjs = deps.map(d => {
+      const st = _ledStatus(d, pend);
+      const cid = d.matchedCaseId || '';
+      const cs = cid ? all.find(x => x && (x.id === cid || x._docId === cid)) : null;
+      const link = cid ? (escapeHtml(cid) + (cs && (cs.customer || {}).name ? ' <span style="color:#6b7280;">(' + escapeHtml((cs.customer || {}).name) + ')</span>' : '')) : '-';
+      const q = (_ledTime(d) + ' ' + d.amount + ' ' + Number(d.amount || 0).toLocaleString() + ' ' + (d.name || '') + ' ' + cid + ' ' + ((cs && (cs.customer || {}).name) || '') + ' ' + st.t).toLowerCase();
+      const undo = d.status === 'done' && cid ? `<button class="led-btn" data-undo="${escapeHtml(d._id)}">확정 취소</button>` : '';
+      return { q, st: st.t, html: `<tr><td>${escapeHtml(_ledTime(d))}</td><td class="amt">${Number(d.amount || 0).toLocaleString()}</td><td>${escapeHtml(d.name || '-')}</td>
+        <td><span class="led-chip ${st.c}">${st.t}</span></td><td>${link}</td>
+        <td><details><summary>원문</summary><pre>${escapeHtml(d.rawText || '')}</pre></details></td><td>${undo}</td></tr>` };
     });
-
-    const toolbar = `<div class="dep-toolbar"><span class="dep-seclabel">🔔 매칭된 입금 <span class="dep-cnt">${matched.length}건</span></span>
-      <button class="dep-toggle" id="depSampleToggle">${showSample ? '예시 숨기기' : '🧪 예시 카드 보기'}</button></div>`;
-
-    let listHtml = '';
-    if (showSample) listHtml += _depCardHtml(_depSample());
-
-    if (!matched.length && !unmatched.length && !showSample) {
-      listHtml += `<div class="dep-empty">아직 도착한 입금문자가 없습니다.<br>법인폰 자동전달이 연결되면 여기에 자동으로 표시됩니다.</div>`;
-    } else {
-      listHtml += matched.map(_depCardHtml).join('');
-      if (!matched.length && !showSample) {
-        listHtml += `<div class="dep-empty" style="padding:24px;">성함이 입금대기 건과 매칭되는 입금이 없습니다.<br><span style="font-size:12px;color:#9ca3af;">아래 미매칭 입금을 펼쳐서 확인하세요.</span></div>`;
-      }
-      if (unmatched.length) {
-        const open = !!window._depFoldOpen;
-        listHtml += `<div class="dep-fold ${open ? 'open' : ''}" id="depFold">
-          <div class="dep-fold-head" id="depFoldHead">
-            <span class="dep-chev">▶</span> 🔻 미매칭 입금 <span class="dep-fold-cnt">${unmatched.length}건</span>
-            <span class="dep-noise">구성품 구매 등</span>
-            <span style="font-size:11px;color:#9ca3af;font-weight:600;">클릭해서 ${open ? '접기' : '펼치기'}</span>
-            <button class="dep-btn" id="depIgnoreAllBtn" style="margin-left:auto;background:#e0e7ff;color:#3730a3;border:1px solid #c7d2fe;">✅ 전체 확인 (${unmatched.length}건 정리)</button>
-          </div>
-          <div class="dep-fold-body">${unmatched.map(_depCardHtml).join('')}
-            <div class="dep-foothint">여기 있는 건도 [무시]로 정리하거나 [🔗 직접 연결]로 처리할 수 있습니다 — 사라지지 않습니다.</div>
-          </div></div>`;
-      }
-    }
-    box.innerHTML = _depStyle() + banner + toolbar + listHtml;
+    window._ledRows = rowObjs;
+    box.innerHTML = `<style>
+      .led-card{background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:16px 18px}
+      .led-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.led-head b{font-size:15px}
+      .led-q{flex:1;min-width:220px;padding:8px 11px;border:1px solid #d8dce3;border-radius:8px;font-size:13px}
+      .led-s{padding:8px 11px;border:1px solid #d8dce3;border-radius:8px;font-size:13px}
+      .led-n{color:#6b7280}.led-note{margin:8px 0 12px;color:#6b7280;line-height:1.6;font-size:12.5px}
+      .led-t{width:100%;border-collapse:collapse;font-size:13px}
+      .led-t th{background:#f9fafb;text-align:left;padding:9px 10px;border-bottom:1px solid #e5e7eb;font-size:12.5px}
+      .led-t td{padding:9px 10px;border-bottom:1px solid #f0f1f4;vertical-align:top}
+      .led-t td.amt{text-align:right;font-weight:800}
+      .led-chip{display:inline-block;padding:2px 10px;border-radius:99px;font-size:11.5px;font-weight:700}
+      .c-ok{background:#e7f6ef;color:#0a7a52}.c-chk{background:#fff8eb;color:#92400e}.c-wait{background:#f3f4f6;color:#6b7280}
+      .led-t details summary{cursor:pointer;color:#6b7280;font-size:12px}
+      .led-t details pre{white-space:pre-wrap;font-size:12px;color:#475569;margin:4px 0 0;font-family:inherit}
+      .led-btn{border:1px solid #d8dce3;background:#fff;border-radius:8px;padding:4px 10px;font-size:12px;cursor:pointer}
+    </style>
+    <div class="led-card">
+      <div class="led-head"><b>💰 입금내역</b>
+        <input id="ledQ" class="led-q" placeholder="이름 · 금액 · 날짜 · 수리번호 검색" value="${escapeHtml(window._ledQ)}">
+        <select id="ledS" class="led-s">${['', '자동확인', '확인완료', '확인 필요', '연결 대기', '제외'].map(o => `<option value="${o}" ${window._ledS === o ? 'selected' : ''}>${o || '전체'}</option>`).join('')}</select>
+        <span id="ledN" class="led-n"></span></div>
+      <div class="led-note">입금 문자는 이곳에 계속 쌓입니다. <b>접수자 이름과 입금자명, 금액이 같으면 자동으로 입금완료</b>가 되고, 이름만 맞거나 금액만 맞으면 입금대기 카드에 <b>[입금내역 확인 필요]</b>가 뜹니다(확정은 카드에서). 잘못 자동확인된 건은 [확정 취소]로 되돌립니다.</div>
+      <table class="led-t" id="ledT"><thead><tr><th>일시</th><th style="text-align:right">금액</th><th>입금자</th><th>상태</th><th>연결된 접수</th><th>문자</th><th></th></tr></thead>
+      <tbody id="ledBody"></tbody></table>
+      <div id="ledPager" style="display:flex;align-items:center;justify-content:center;gap:10px;margin-top:12px;"></div>
+    </div>`;
     _depWire();
+  }
+
+  // (v115) 검색·상태 필터 후 10건씩 페이지로 나눠 표시
+  window._ledPage = window._ledPage || 1;
+  function _ledFilter(resetPage) {
+    const box = document.getElementById('depositContent'); if (!box) return;
+    const qi = box.querySelector('#ledQ'), si = box.querySelector('#ledS');
+    const q = ((qi && qi.value) || '').trim().toLowerCase(), st = (si && si.value) || '';
+    if (resetPage === true) window._ledPage = 1;
+    window._ledQ = (qi && qi.value) || ''; window._ledS = st;
+    const list = (window._ledRows || []).filter(r => (!q || r.q.indexOf(q) >= 0) && (!st || r.st === st));
+    const PAGE = 10, pages = Math.max(1, Math.ceil(list.length / PAGE));
+    if (window._ledPage > pages) window._ledPage = pages;
+    if (window._ledPage < 1) window._ledPage = 1;
+    const cur = list.slice((window._ledPage - 1) * PAGE, window._ledPage * PAGE);
+    const tb = box.querySelector('#ledBody');
+    if (tb) tb.innerHTML = cur.map(r => r.html).join('') || '<tr><td colspan="7" style="color:#6b7280">입금내역이 없습니다.</td></tr>';
+    const nn = box.querySelector('#ledN'); if (nn) nn.textContent = list.length + '건';
+    const pg = box.querySelector('#ledPager');
+    if (pg) {
+      pg.innerHTML = list.length <= PAGE ? '' :
+        `<button class="led-btn" id="ledPrev" ${window._ledPage <= 1 ? 'disabled' : ''}>◀ 이전</button><span style="color:#374151;font-weight:700;">${window._ledPage} / ${pages}</span><button class="led-btn" id="ledNext" ${window._ledPage >= pages ? 'disabled' : ''}>다음 ▶</button>`;
+      const pv = pg.querySelector('#ledPrev'), nx = pg.querySelector('#ledNext');
+      if (pv) pv.onclick = () => { window._ledPage--; _ledFilter(); };
+      if (nx) nx.onclick = () => { window._ledPage++; _ledFilter(); };
+    }
+    box.querySelectorAll('[data-undo]').forEach(b => { b.onclick = () => _ledUndo(b.dataset.undo); });
+  }
+
+  // [확정 취소] — 입금 문서를 new로, 접수는 확정 직전 단계(입금대기)로. 이미 다음 단계로 진행됐으면 취소하지 않는다.
+  async function _ledUndo(depId) {
+    const dep = (window._depositDocs || []).find(x => x._id === depId);
+    if (!dep || !dep.matchedCaseId) return;
+    const all = Array.isArray(window.dashAllCases) ? window.dashAllCases : [];
+    const c = all.find(x => x && (x.id === dep.matchedCaseId || x._docId === dep.matchedCaseId));
+    if (!c) { alert('연결된 접수를 찾을 수 없거나 이미 완료된 건이라 취소할 수 없습니다.'); return; }
+    const h = Array.isArray(c.statusHistory) ? c.statusHistory : [];
+    const last = h[h.length - 1] || {};
+    if (!(last.fromStage === '입금대기' && last.toStage === c.stage) || c.erpProcessed === true) {
+      alert('이미 다음 단계로 진행된 건이라 [확정 취소]를 할 수 없습니다.\n(현재 단계: ' + (c.stage || '-') + ')');
+      return;
+    }
+    if (!confirm('[' + ((c.customer || {}).name || '') + ' · ' + c.id + '] 접수를 입금대기로 되돌리고,\n이 입금문자를 다시 "미확정"으로 돌릴까요?')) return;
+    const user = (typeof NAS_USER !== 'undefined' ? NAS_USER : '') || '관리자';
+    const docId = c._docId || c.id;
+    try {
+      await runTransaction(db, async (tx) => {
+        const cref = doc(db, 'cases', docId), dref = doc(db, 'incomingDeposits', depId);
+        const cs = await tx.get(cref), ds = await tx.get(dref);
+        if (!cs.exists() || !ds.exists()) throw new Error('NOTFOUND');
+        const cd = cs.data() || {}, dd = ds.data() || {};
+        const hh = Array.isArray(cd.statusHistory) ? cd.statusHistory : [];
+        const l = hh[hh.length - 1] || {};
+        if (dd.status !== 'done' || !(l.fromStage === '입금대기' && l.toStage === cd.stage) || cd.erpProcessed === true) throw new Error('MOVED');
+        const upd = {
+          stage: '입금대기', depositConfirmedAt: deleteField(),
+          actionStatus: (Array.isArray(cd.actionStatus) ? cd.actionStatus : []).filter(s => s !== '입금완료'),
+          statusUpdatedAt: serverTimestamp(), statusUpdatedBy: user, updatedAt: serverTimestamp(),
+          statusHistory: [...hh, { changedAt: new Date().toISOString(), changedBy: user, role: 'happycall', fromStage: cd.stage || '', toStage: '입금대기', fromStatus: cd.status || '', toStatus: '', note: '[입금 확정 취소] ' + _depStampText(dd), action: '입금확정취소' }]
+        };
+        if (cd.completionReason === '수리완료(박스구매)') { upd.completionReason = deleteField(); upd.erpReadyForInput = deleteField(); upd.erpProcessed = deleteField(); upd.erpPartsUploaded = deleteField(); }
+        tx.update(cref, upd);
+        tx.update(dref, { status: 'new', handledBy: deleteField(), handledAt: deleteField(), matchedCaseId: deleteField(), autoConfirmed: deleteField(), undoneBy: user, undoneAt: serverTimestamp() });
+      });
+      dep.status = 'new'; delete dep.handledBy; delete dep.matchedCaseId;
+      window._depAutoFail = window._depAutoFail || {};
+      window._depAutoFail[dep._id + '|' + (c._docId || c.id)] = true;   // 취소한 건은 자동으로 다시 확정하지 않는다
+      showToast('↩️ 확정을 취소했습니다 (접수는 입금대기로 복귀)', 'success');
+      _depPaint();
+    } catch (e) {
+      if (String(e && e.message) === 'MOVED') alert('이미 상태가 바뀐 건이라 [확정 취소]를 할 수 없습니다. 화면을 새로고침 해주세요.');
+      else showToast('확정 취소 실패: ' + (e.message || e), 'error');
+    }
   }
 
   function _depWire() {
     const box = document.getElementById('depositContent');
     if (!box) return;
-    const t = box.querySelector('#depSampleToggle');
-    if (t) t.onclick = () => { window._depShowSample = !window._depShowSample; _depPaint(); };
-    // (v83) 미매칭 접기 토글
-    const fh = box.querySelector('#depFoldHead');
-    if (fh) fh.onclick = () => { window._depFoldOpen = !window._depFoldOpen; _depPaint(); };
-    // (v83) 미매칭 전체 확인 (일괄 정리) — 헤더 토글로 전파되지 않게 stopPropagation
-    const ia = box.querySelector('#depIgnoreAllBtn');
-    if (ia) ia.onclick = (e) => { e.stopPropagation(); if (typeof window._depIgnoreAllUnmatched === 'function') window._depIgnoreAllUnmatched(); };
-    box.querySelectorAll('[data-act]').forEach(btn => { btn.onclick = () => _depAction(btn.dataset); });
-    // 매칭 케이스 줄 클릭 → 대시보드 상세 카드 열기
-    box.querySelectorAll('[data-open]').forEach(el => {
-      el.onclick = () => {
-        const id = el.dataset.open;
-        if (id && typeof window.dashOpenModal === 'function') window.dashOpenModal(id);
-        else showToast('상세 카드를 열 수 없습니다', 'error');
-      };
-    });
+    const qi = box.querySelector('#ledQ'), si = box.querySelector('#ledS');
+    if (qi) qi.oninput = () => _ledFilter(true);
+    if (si) si.onchange = () => _ledFilter(true);
+    _ledFilter();
   }
 
   // (v83) 미매칭 입금 일괄 확인 — 구성품 구매 등 매칭 안 되는 건을 한 번에 목록에서 정리(status=ignored)
@@ -27500,6 +27647,315 @@
     const si = box.querySelector('#_depLinkSearch');
     si.oninput = () => renderList(si.value);
     si.focus();
+  };
+
+
+  // ==================== (v110) 입금 자동확인 · 입금내역 확인 필요 ====================
+  // 규칙
+  //  · 이름(공백·끝의 '님' 제거) 과 금액(_caseExpectedAmount) 이 정확히 같은 입금 문자가 정확히 1건이고,
+  //    같은 이름·같은 청구금액의 다른 입금대기 건이 없으면 → 기존 [입금완료] 버튼이 하는 일을 그대로 자동 실행
+  //  · 그 외 입금 문자 후보가 있으면 → 카드에 '입금내역 확인 필요' 표시, 담당자가 문자를 골라 확정
+  //  · 자동 제외: 헤어드라이어 iHD01 · 폐기 요청 · 추가요청 건 (사람이 처리). 장기미입금 건은 자동 대상.
+  //  · 같은 입금 문서를 두 화면이 동시에 처리하지 못하도록 runTransaction 으로 먼저 점유한다.
+  window._depAutoLocks = window._depAutoLocks || {};
+  window._depAutoFail = window._depAutoFail || {};
+  window._depAutoMap = window._depAutoMap || {};
+
+  function _depMs(t) {
+    try {
+      if (!t) return 0;
+      if (typeof t.toMillis === 'function') return t.toMillis();
+      if (typeof t.toDate === 'function') return t.toDate().getTime();
+      if (typeof t.seconds === 'number') return t.seconds * 1000;
+    } catch (e) {}
+    return 0;
+  }
+  function _depActiveDocs() {
+    return (window._depositDocs || []).filter(d => d && d.status !== 'done' && d.status !== 'ignored' && !window._depAutoLocks[d._id]);
+  }
+  function _depCaseKind(c) {
+    if (c && c.isAddReq === true) return 'addreq';
+    if (window.isHairDryerIHD01 && window.isHairDryerIHD01(c) && !c.bosangSale) return 'hairdryer';
+    if (c && c.bosangSale) return 'bosang';
+    if (c && c.discardRequested) return 'discard';
+    return 'normal';
+  }
+  // 입금대기 한 건의 판정: {state:'auto'|'check'|'none', kind, exp, exact, cands, twins}
+  window.depCaseEval = function(c) {
+    const none = { state: 'none', cands: [], exact: [], twins: 0 };
+    try {
+      if (!c || c.stage !== '입금대기') return none;
+      if (_depPolicy(c) === 'off') return none;   // (v114) 유형별 설정이 off면 판정·표시 안 함
+      const key = _depNorm((c.customer || {}).name);
+      const exp = Number(window._caseExpectedAmount(c)) || 0;
+      const caseKey = c._docId || c.id;
+      const caseMs = _depMs(c.createdAt);
+      const cands = [];
+      _depActiveDocs().forEach(d => {
+        const sp = _depSplit(d.name), cl4 = _depCaseL4(c);
+        const nameOk = !!key && sp.base === key;
+        const phoneBad = nameOk && !!sp.l4 && !!cl4 && sp.l4 !== cl4;   // 번호를 붙였는데 접수와 다름
+        const amtOk = exp > 0 && Number(d.amount) === exp;
+        if (!nameOk && !amtOk) return;
+        // 금액만 같은 문자는 접수 이후에 도착한 것만 후보 (접수 전 입금은 이 건과 무관)
+        if (!nameOk && amtOk) { const rm = _depMs(d.receivedAt); if (rm && caseMs && rm < caseMs) return; }
+        cands.push({ dep: d, nameOk, amtOk, phoneBad, l4: sp.l4 });
+      });
+      if (!cands.length) return Object.assign({}, none, { kind: _depCaseKind(c), exp });
+      const rank = x => (x.nameOk && x.amtOk) ? 0 : (x.nameOk ? 1 : 2);
+      cands.sort((a, b) => rank(a) - rank(b) || _depMs(b.dep.receivedAt) - _depMs(a.dep.receivedAt));
+      const exact = cands.filter(x => x.nameOk && x.amtOk && !x.phoneBad && !x.dep.undoneBy);   // 확정 취소된 입금은 자동 재확정 안 함
+      const kind = _depCaseKind(c);
+      const twins = (window.dashAllCases || []).filter(o => o && o.stage === '입금대기' && (o._docId || o.id) !== caseKey &&
+        _depNorm((o.customer || {}).name) === key && Number(window._caseExpectedAmount(o)) === exp &&
+        !(exact.length === 1 && exact[0].l4 && _depCaseL4(o) && _depCaseL4(o) !== exact[0].l4)).length;   // 번호가 붙은 입금이면 뒤 4자리가 다른 동명이인은 제외
+      const _pol = _depPolicy(c);
+      const excluded = (_pol !== 'auto');   // 'check'는 자동 안 하고 확인 필요로만
+
+      const auto = (exact.length === 1 && twins === 0 && !excluded);
+      return { state: auto ? 'auto' : 'check', kind, exp, exact, cands: cands.slice(0, 10), total: cands.length, twins };
+    } catch (e) { console.warn('입금 판정 오류:', e); return none; }
+  };
+
+  // 입금 문서 점유 (트랜잭션) — 성공한 화면만 단계 이동을 한다
+  async function _depClaim(depId, caseId, by, extra) {
+    try {
+      await runTransaction(db, async (tx) => {
+        const ref = doc(db, 'incomingDeposits', depId);
+        const snap = await tx.get(ref);
+        if (!snap.exists()) throw new Error('NOCLAIM');
+        const st = (snap.data() || {}).status;
+        if (st === 'done' || st === 'ignored') throw new Error('NOCLAIM');
+        tx.update(ref, Object.assign({ status: 'done', matchedCaseId: caseId, handledBy: by, handledAt: serverTimestamp() }, extra || {}));
+      });
+      return true;
+    } catch (e) {
+      if (String(e && e.message) === 'NOCLAIM') return false;
+      throw e;
+    }
+  }
+  // 점유 후 단계 이동 결과 확인 — 안 움직였으면 입금 문서를 되살려 사람이 다시 처리하게 한다
+  async function _depAfterMove(depId, docId, note) {
+    let stage = null;
+    try { const s = await getDoc(doc(db, 'cases', docId)); if (s.exists()) stage = (s.data() || {}).stage; } catch (e) {}
+    if (stage === '입금대기') {
+      try { await updateDoc(doc(db, 'incomingDeposits', depId), { status: 'new', autoNote: note, handledBy: deleteField(), handledAt: deleteField(), matchedCaseId: deleteField() }); } catch (e) {}
+      const d = (window._depositDocs || []).find(x => x._id === depId); if (d) d.status = 'new';
+      return false;
+    }
+    return true;
+  }
+  function _depPayDoneFn(c) {
+    const k = _depCaseKind(c);
+    if (k === 'hairdryer') return dashActionHairDryerPayDone;
+    if (k === 'bosang') return dashActionASBosangPayDone;
+    if (k === 'discard') return dashActionASDiscardPayDone;
+    return dashActionDepositDone;   // 일반 AS · 교환·반품(내부에서 처리대기로)
+  }
+  function _depStampText(dep) {
+    return Number(dep.amount || 0).toLocaleString() + '원 · 입금자 ' + (dep.name || '-') + ' · ' + (dep.smsTime || '');
+  }
+
+  async function _depAutoConfirm(c, dep) {
+    const failKey = dep._id + '|' + (c._docId || c.id);
+    if (window._depAutoFail[failKey]) return;
+    const docId = c._docId || c.id;
+    window._depAutoLocks[dep._id] = true;
+    try {
+      let ok = false;
+      try { ok = await _depClaim(dep._id, c.id, '자동', { autoConfirmed: true, depositorName: dep.name || '' }); }
+      catch (e) { console.warn('입금 점유 실패:', e); window._depAutoFail[failKey] = true; return; }
+      if (!ok) { const d = (window._depositDocs || []).find(x => x._id === dep._id); if (d) d.status = 'done'; return; }   // 다른 화면이 먼저 처리
+      let fresh = null;
+      try { const s = await getDoc(doc(db, 'cases', docId)); if (s.exists()) fresh = Object.assign({}, s.data(), { _docId: s.id }); } catch (e) {}
+      if (!fresh || fresh.stage !== '입금대기') {
+        try { await updateDoc(doc(db, 'incomingDeposits', dep._id), { autoNote: '단계 이동 안 됨 (케이스가 입금대기가 아님)' }); } catch (e) {}
+        return;
+      }
+      const note = '[입금 자동확인] ' + _depStampText(dep);
+      const auto = { note, quiet: true, changedBy: '자동' };
+      try { await _depPayDoneFn(fresh)(fresh, auto); } catch (e) { console.warn('입금 자동 이동 오류:', e); }
+      const moved = await _depAfterMove(dep._id, docId, '자동 이동 실패 — 사람이 확인 필요');
+      if (!moved) { window._depAutoFail[failKey] = true; return; }
+      try { dep.status = 'done'; dep.handledBy = '자동'; dep.matchedCaseId = c.id; dep.autoConfirmed = true; } catch (e) {}
+      window._depAutoMap[c.id] = dep;
+      try { showToast('✅ ' + ((c.customer || {}).name || '') + ' 입금 자동확인 ' + Number(dep.amount || 0).toLocaleString() + '원', 'success'); } catch (e) {}
+    } finally {
+      delete window._depAutoLocks[dep._id];
+      try { _depRebuildAutoMap(); if (typeof window.dashRenderList === 'function') window.dashRenderList(); _depUpdateBadge(); } catch (e) {}
+    }
+  }
+
+  let _depAutoTimer = null, _depAutoBusy = false;
+  function _depAutoSchedule() {
+    if (window.DEPOSIT_AUTO_CONFIRM !== true) return;
+    clearTimeout(_depAutoTimer);
+    _depAutoTimer = setTimeout(_depAutoRun, 1200);
+  }
+  window._depAutoSchedule = _depAutoSchedule;
+  async function _depAutoRun() {
+    if (window.DEPOSIT_AUTO_CONFIRM !== true) return;
+    if (_depAutoBusy) { _depAutoSchedule(); return; }
+    _depAutoBusy = true;
+    try {
+      const pend = (window.dashAllCases || []).filter(c => c && c.stage === '입금대기');
+      for (const c of pend) {
+        const ev = window.depCaseEval(c);
+        if (ev.state !== 'auto') continue;
+        if (typeof window.canActOnStage === 'function' && !window.canActOnStage(c)) continue;
+        await _depAutoConfirm(c, ev.exact[0].dep);
+      }
+    } catch (e) { console.warn('입금 자동확인 오류:', e); }
+    finally { _depAutoBusy = false; }
+  }
+  function _depRebuildAutoMap() {
+    const m = {};
+    (window._depositDocs || []).forEach(d => { if (d && d.status === 'done' && d.autoConfirmed === true && d.matchedCaseId) m[d.matchedCaseId] = d; });
+    window._depAutoMap = Object.assign({}, m, window._depAutoMap);
+  }
+
+  // 카드 목록용 표시 조각 (노란 띠 / 칩)
+  window.depCardDecor = function(c) {
+    const out = { style: '', chip: '' };
+    try {
+      if (!c) return out;
+      if (c.stage === '입금대기') {
+        const ev = window.depCaseEval(c);
+        if (ev.state === 'check') {
+          out.style = 'border-left:6px solid #f59e0b;background:#fffbeb;';
+          out.chip = `<span class="card-status-label" style="background:#fef3c7;color:#b45309;font-weight:800;">💰 입금내역 확인 필요 ${ev.total || ev.cands.length}건</span>`;
+        }
+      }
+      const a = window._depAutoMap[c.id];
+      if (a) out.chip += `<span class="card-status-label" style="background:#dcfce7;color:#166534;font-weight:800;">✅ 입금 자동확인 ${Number(a.amount || 0).toLocaleString()}원</span>`;
+    } catch (e) {}
+    return out;
+  };
+
+  // 카드 모달: [입금완료] 버튼을 확인 필요 건에서는 [입금내역 확인 필요]로 교체
+  window.depSwapPayButtons = function(c, buttons) {
+    try {
+      if (!c || c.stage !== '입금대기' || !Array.isArray(buttons)) return;
+      const pol = _depPolicy(c);
+      if (pol === 'off') return;
+      const ev = window.depCaseEval(c);
+      // 'auto' 유형은 애매한 건(확인 필요)일 때만 교체 / 'check' 유형(유상·보상판매)은 항상 [입금내역 확인]으로 교체 (v116)
+      if (pol === 'auto' && ev.state !== 'check') return;
+      const ids = ['actDepositDone', 'actBosangPayDone', 'actDiscardPayDone', 'actHairDryerPayDone', 'actPayDone'];
+      const n = (ev.total || (ev.cands || []).length || 0);
+      const nb = { id: 'actDepositCheck', label: n > 0 ? '🔎 입금내역 확인 필요 (' + n + '건)' : '🔎 입금내역 확인', bg: '#d97706',
+        action: () => window.depOpenCheckModal(c) };
+      const idx = buttons.findIndex(b => ids.indexOf(b.id) >= 0);
+      const orig = idx >= 0 ? buttons[idx] : null;
+      if (idx >= 0) buttons[idx] = nb; else if (!c.isAddReq) buttons.unshift(nb);
+      // (v116) 유상·보상판매: 문자 없이 입금완료는 해피콜 조장만, 사유 필수
+      if (pol === 'check' && orig && window.canRevertComplete && window.canRevertComplete()) {
+        const at = buttons.indexOf(nb) + 1;
+        buttons.splice(at, 0, { id: 'actDepositNoSms', label: '입금완료(조장 · 사유 필수)', bg: '#6b7280', needsNote: true,
+          action: async () => {
+            const note = (typeof dashGetActionNote === 'function') ? String(dashGetActionNote() || '').trim() : '';
+            if (!note) {
+              showToast('문자 없이 입금완료 처리하는 사유를 입력하세요', 'error');
+              const el = document.getElementById('dashActionNote'); if (el) el.focus();
+              return;
+            }
+            if (!confirm('입금 문자 없이 입금완료로 처리할까요?\n사유: ' + note)) return;
+            await _depPayDoneFn(c)(c, { note: '[문자 없이 입금완료 · 조장] ' + note });
+          } });
+      }
+    } catch (e) { console.warn('입금 버튼 교체 오류:', e); }
+  };
+
+  // 확인 창 — 후보 입금 문자를 고르고 [입금확인]
+  window.depOpenCheckModal = function(c) {
+    const ev = window.depCaseEval(c);
+    const ov = document.createElement('div');
+    ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:99999;display:flex;align-items:center;justify-content:center;padding:20px;';
+    const box = document.createElement('div');
+    box.style.cssText = 'background:#fff;border-radius:14px;padding:20px;width:640px;max-width:95vw;max-height:85vh;overflow:auto;box-shadow:0 10px 40px rgba(0,0,0,.2);font-family:inherit;';
+    const exp = ev.exp;
+    box.innerHTML = `
+      <div style="font-size:16px;font-weight:800;margin-bottom:4px;">🔎 입금내역 확인</div>
+      <div style="font-size:13px;color:#6b7280;margin-bottom:12px;"><b>${escapeHtml((c.customer || {}).name || '-')}</b> · ${escapeHtml(c.id)} · 청구금액 <b style="color:#4f46e5;">${exp.toLocaleString()}원</b></div>
+      <div id="_depChkList" style="display:flex;flex-direction:column;gap:8px;"></div>
+      <div style="font-weight:800;font-size:13px;margin:14px 0 6px;">🔍 다른 입금 찾기</div>
+      <input id="_depChkQ" type="text" placeholder="입금자명 · 금액 · 날짜로 검색 (예: 김철수, 85400, 11/04)" style="width:100%;box-sizing:border-box;padding:9px 11px;border:1px solid #d8dce3;border-radius:8px;font-size:13px;">
+      <div id="_depChkRes" style="display:flex;flex-direction:column;gap:8px;margin-top:8px;"><div style="color:#9ca3af;font-size:12px;">검색하면 후보에 없는 입금도 여기에 표시됩니다. (처리된 입금은 나오지 않습니다)</div></div>
+      <div style="text-align:right;margin-top:14px;display:flex;gap:8px;justify-content:flex-end;">
+        <button id="_depChkClose" style="padding:9px 16px;background:#f3f4f6;border:none;border-radius:8px;font-weight:700;cursor:pointer;">닫기</button>
+        <button id="_depChkOk" disabled style="padding:9px 18px;background:#9ca3af;color:#fff;border:none;border-radius:8px;font-weight:700;cursor:not-allowed;">입금확인</button>
+      </div>`;
+    ov.appendChild(box); document.body.appendChild(ov);
+    const close = () => { try { document.body.removeChild(ov); } catch (e) {} };
+    ov.addEventListener('click', e => { if (e.target === ov) close(); });
+    box.querySelector('#_depChkClose').onclick = close;
+    const listEl = box.querySelector('#_depChkList');
+    let selected = '';
+    const searchMap = {};
+    const rowHtml = (x) => {
+      const d = x.dep; const amt = Number(d.amount) || 0; const diff = amt - exp;
+      const nb = x.nameOk ? '<span style="background:#10b981;color:#fff;border-radius:99px;padding:2px 9px;font-size:11px;font-weight:800;">이름 일치</span>' + (x.phoneBad ? '<span style="background:#ef4444;color:#fff;border-radius:99px;padding:2px 9px;font-size:11px;font-weight:800;">번호 4자리 다름</span>' : (x.l4 ? '<span style="background:#10b981;color:#fff;border-radius:99px;padding:2px 9px;font-size:11px;font-weight:800;">번호 일치</span>' : '')) : '<span style="background:#f59e0b;color:#fff;border-radius:99px;padding:2px 9px;font-size:11px;font-weight:800;">이름 다름</span>';
+      const ab = x.amtOk ? '<span style="background:#10b981;color:#fff;border-radius:99px;padding:2px 9px;font-size:11px;font-weight:800;">금액 일치</span>' : `<span style="background:#f59e0b;color:#fff;border-radius:99px;padding:2px 9px;font-size:11px;font-weight:800;">금액 ${diff < 0 ? '-' : '+'}${Math.abs(diff).toLocaleString()}원</span>`;
+      return `<label style="display:block;border:1px solid #e5e7eb;border-radius:10px;padding:10px 12px;cursor:pointer;">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+          <input type="radio" name="_depChk" value="${escapeHtml(d._id)}">
+          <b style="font-size:15px;">${escapeHtml(d.name || '-')}</b>
+          <b style="color:#4f46e5;">${amt.toLocaleString()}원</b>
+          ${nb}${ab}
+          <span style="margin-left:auto;font-size:12px;color:#9ca3af;">${escapeHtml(d.smsTime || '')}</span>
+        </div>
+        ${d.rawText ? `<div style="margin-top:6px;font-size:11.5px;color:#6b7280;background:#f9fafb;border:1px dashed #e5e7eb;border-radius:7px;padding:6px 9px;white-space:pre-line;font-family:monospace;">${escapeHtml(d.rawText)}</div>` : ''}
+      </label>`;
+    };
+    listEl.innerHTML = ev.cands.map(rowHtml).join('') || '<div style="color:#9ca3af;padding:10px;font-size:13px;">이름·금액이 맞는 입금 문자가 없습니다. 아래에서 직접 찾아보세요.</div>';
+    // (v116) 후보에 없는 입금 검색 — 처리 안 된 입금 중 입금자명·금액·날짜로 찾는다
+    const resEl = box.querySelector('#_depChkRes');
+    const candIds = {}; ev.cands.forEach(x => { candIds[x.dep._id] = 1; });
+    box.querySelector('#_depChkQ').oninput = function() {
+      const ql = String(this.value || '').trim().toLowerCase();
+      if (!ql) { resEl.innerHTML = '<div style="color:#9ca3af;font-size:12px;">검색하면 후보에 없는 입금도 여기에 표시됩니다. (처리된 입금은 나오지 않습니다)</div>'; return; }
+      const hits = _depActiveDocs().filter(d => !candIds[d._id] &&
+        (String(d.name || '') + ' ' + d.amount + ' ' + Number(d.amount || 0).toLocaleString() + ' ' + String(d.smsTime || '') + ' ' + String(d.smsTime || '').replace(/\//g, '-')).toLowerCase().indexOf(ql) >= 0).slice(0, 20);
+      resEl.innerHTML = hits.map(d => {
+        const sp = _depSplit(d.name), cl4 = _depCaseL4(c);
+        const nameOk = !!_depNorm((c.customer || {}).name) && sp.base === _depNorm((c.customer || {}).name);
+        const x = { dep: d, nameOk, amtOk: exp > 0 && Number(d.amount) === exp, phoneBad: nameOk && !!sp.l4 && !!cl4 && sp.l4 !== cl4, l4: sp.l4 };
+        searchMap[d._id] = x;
+        return rowHtml(x);
+      }).join('') || '<div style="color:#9ca3af;padding:8px;font-size:13px;">검색 결과가 없습니다.</div>';
+    };
+    const okBtn = box.querySelector('#_depChkOk');
+    box.addEventListener('change', (e) => {
+      const r = e.target; if (!r || r.name !== '_depChk') return;
+      selected = r.value; okBtn.disabled = false; okBtn.style.background = '#1D9E75'; okBtn.style.cursor = 'pointer';
+    });
+    okBtn.onclick = async () => {
+      if (!selected) return;
+      const cand = ev.cands.find(x => x.dep._id === selected) || searchMap[selected]; if (!cand) return; const dep = cand.dep;
+      okBtn.disabled = true; okBtn.textContent = '처리 중...';
+      const docId = c._docId || c.id;
+      const user = (typeof NAS_USER !== 'undefined' ? NAS_USER : '') || '';
+      try {
+        const claimed = await _depClaim(dep._id, c.id, user || '관리자', { depositorName: dep.name || '' });
+        if (!claimed) { showToast('이미 다른 곳에서 처리된 입금입니다. 새로 고쳐 주세요', 'error'); close(); return; }
+        let fresh = null;
+        try { const s = await getDoc(doc(db, 'cases', docId)); if (s.exists()) fresh = Object.assign({}, s.data(), { _docId: s.id }); } catch (e) {}
+        if (!fresh || fresh.stage !== '입금대기') {
+          try { await updateDoc(doc(db, 'incomingDeposits', dep._id), { autoNote: '단계 이동 안 됨 (케이스가 입금대기가 아님)' }); } catch (e) {}
+          showToast('이미 입금대기가 아닌 건입니다. 입금 문자는 처리됨으로 표시했습니다', 'info'); close(); return;
+        }
+        const note = '[입금확인] ' + _depStampText(dep) + ' (문자 선택)';
+        const d0 = dep; d0.status = 'done';
+        await _depPayDoneFn(fresh)(fresh, { note });
+        const moved = await _depAfterMove(dep._id, docId, '단계 이동 실패 — 다시 시도');
+        if (!moved) { showToast('단계 이동에 실패했습니다. 입금 문자를 되살렸으니 다시 시도하세요', 'error'); }
+        close();
+      } catch (e) {
+        console.warn('입금확인 실패:', e);
+        showToast('처리 실패: ' + (e.message || e), 'error');
+        okBtn.disabled = false; okBtn.textContent = '입금확인';
+      }
+    };
   };
 
   async function _depAction(ds) {
