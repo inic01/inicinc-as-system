@@ -5217,7 +5217,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v117';
+  const APP_VERSION = 'v118';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -27248,12 +27248,24 @@
     } catch (e) { console.warn('입금내역 정리 건너뜀:', e && e.message ? e.message : e); }
   }
 
+  // (v118) 서버가 입금자명을 못 읽어 name이 비었을 때(예: 홍길동1234) 문자 원문에서 직접 읽는다. 원문 형식: '입금 N원' 다음 줄이 입금자명
+  function _depFixName(d) {
+    try {
+      if (d && !String(d.name || '').trim() && d.rawText) {
+        const lines = String(d.rawText).split(/\r?\n/).map(x => x.trim()).filter(Boolean);
+        const i = lines.findIndex(x => /입금\s*[\d,]+\s*원/.test(x));
+        const nm = i >= 0 ? lines[i + 1] : '';
+        if (nm && !/\*/.test(nm) && !/^[\d\-\s]+$/.test(nm)) { d.name = nm; d._nameFromText = true; }
+      }
+    } catch (e) {}
+    return d;
+  }
   window.startDepositWatch = function() {
     if (window._depositUnsub) return;
     try {
       const q = query(collection(db, 'incomingDeposits'), orderBy('receivedAt', 'desc'), limit(200));
       window._depositUnsub = onSnapshot(q, (snap) => {
-        window._depositDocs = snap.docs.map(d => ({ _id: d.id, ...d.data() }));
+        window._depositDocs = snap.docs.map(d => _depFixName({ _id: d.id, ...d.data() }));
         try { _depRebuildAutoMap(); } catch (e) {}
         _depUpdateBadge();
         try { if (typeof window.dashRenderList === 'function') window.dashRenderList(); } catch (e) {}   // (v110) 확인 필요 표시 갱신
