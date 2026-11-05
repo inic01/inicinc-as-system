@@ -5217,7 +5217,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v118';
+  const APP_VERSION = 'v121';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -5231,7 +5231,8 @@
   // (v114) 유형별 입금 처리 방식: 'auto' = 이름·금액 일치 시 자동 이동 / 'check' = 자동 안 함, '입금내역 확인 필요'로 담당자가 선택 / 'off' = 표시도 안 함(기존 방식)
   // (v117) true = 기존 [입금완료] 버튼을 모두에게 다시 보여줌(입금내역 확인 버튼과 함께). false = 유상·보상판매는 입금내역 확인으로만, 조장만 [입금완료(사유 필수)]
   window.DEPOSIT_KEEP_PAY_BUTTON = true;
-  window.DEPOSIT_AUTO_POLICY = { free: 'auto', paid: 'check', exchange: 'auto', returns: 'auto', bosang: 'check', hairdryer: 'off', discard: 'off', addreq: 'off' };
+  window.DEPOSIT_MENU_BADGE = false;   // (v119) 입금내역 메뉴 옆 빨간 숫자
+  window.DEPOSIT_AUTO_POLICY = { free: 'auto', paid: 'auto', exchange: 'auto', returns: 'auto', bosang: 'check', hairdryer: 'off', discard: 'off', addreq: 'off' };
 
   // ============================================================
   // (v85) 글자 "끌어다 놓기" 차단 — 화면이 멈추는 현상의 원인
@@ -27195,6 +27196,30 @@
     else k = String(c.repairType || '').includes('유상') ? 'paid' : 'free';
     return P[k] || 'off';
   }
+  // (v120) '이미 사용된 입금' — 같은 이름(+번호 4자리 일치)·같은 금액의 접수가 이미 입금완료 처리된 경우. 새 후보·확인 필요에서 제외한다.
+  function _depUsedIndex() {
+    const now = Date.now(), C = window._depUsedCache;
+    const all = Array.isArray(window.dashAllCases) ? window.dashAllCases : [];
+    if (C && now - C.t < 1500 && C.n === all.length) return C.map;
+    const map = {};
+    all.forEach(c => {
+      if (!c || c.stage === '입금대기') return;
+      const paid = c.depositConfirmedAt || (Array.isArray(c.statusHistory) && c.statusHistory.some(h => h && /입금/.test(String(h.action || '')) && h.fromStage === '입금대기'));
+      if (!paid) return;
+      const k = _depNorm((c.customer || {}).name); if (!k) return;
+      (map[k] = map[k] || []).push({ l4: _depCaseL4(c), exp: Number(window._caseExpectedAmount(c)) || 0, id: c.id });
+    });
+    window._depUsedCache = { t: now, n: all.length, map };
+    return map;
+  }
+  function _depUsedCase(d) {
+    try {
+      const sp = _depSplit(d.name), amt = Number(d.amount) || 0;
+      const list = (_depUsedIndex()[sp.base]) || [];
+      const hit = list.find(x => x.exp === amt && (!sp.l4 || !x.l4 || x.l4 === sp.l4));
+      return hit ? hit.id : null;
+    } catch (e) { return null; }
+  }
   function _depPendingCases() {
     const all = Array.isArray(window.dashAllCases) ? window.dashAllCases : [];
     return all.filter(c => c && c.stage === '입금대기');
@@ -27224,7 +27249,7 @@
     // (v83) 배지는 '매칭된' 입금만 카운트 — 구성품 구매 등 미매칭 노이즈는 배지에서 제외
     const active = (window._depositDocs || []).filter(d => d.status !== 'done' && d.status !== 'ignored');
     const n = active.filter(d => { const m = _depMatch(d); return m.byName.length > 0 || m.byDone.length > 0; }).length;
-    if (n > 0) { badge.style.display = ''; badge.textContent = n; } else badge.style.display = 'none';
+    if (window.DEPOSIT_MENU_BADGE === true && n > 0) { badge.style.display = ''; badge.textContent = n; } else badge.style.display = 'none';   // (v119) 메뉴 숫자 배지 숨김. 다시 보이려면 DEPOSIT_MENU_BADGE=true
   }
 
   // 실시간 구독 시작 (로그인 후 1회) — 배지 숫자 + 화면 자동 갱신
@@ -27423,7 +27448,8 @@
     if (d.status === 'done') return d.handledBy === '자동' ? { t: '자동확인', c: 'c-ok' } : { t: '확인완료', c: 'c-ok' };
     if (d.status === 'ignored') return { t: '제외', c: 'c-wait' };
     const amt = Number(d.amount) || 0, nm = _depSplit(d.name).base;
-    const hit = pend.some(p => (nm && p.nm === nm) || (p.exp > 0 && p.exp === amt));
+    if (_depUsedCase(d)) return { t: '확인완료', c: 'c-ok' };
+    const hit = !!nm && pend.some(p => p.nm === nm);
     return hit ? { t: '확인 필요', c: 'c-chk' } : { t: '연결 대기', c: 'c-wait' };
   }
   function _depPaint() {
@@ -27435,7 +27461,7 @@
     const all = Array.isArray(window.dashAllCases) ? window.dashAllCases : [];
     const rowObjs = deps.map(d => {
       const st = _ledStatus(d, pend);
-      const cid = d.matchedCaseId || '';
+      const cid = d.matchedCaseId || (d.status === 'new' ? (_depUsedCase(d) || '') : '');
       const cs = cid ? all.find(x => x && (x.id === cid || x._docId === cid)) : null;
       const link = cid ? (escapeHtml(cid) + (cs && (cs.customer || {}).name ? ' <span style="color:#6b7280;">(' + escapeHtml((cs.customer || {}).name) + ')</span>' : '')) : '-';
       const q = (_ledTime(d) + ' ' + d.amount + ' ' + Number(d.amount || 0).toLocaleString() + ' ' + (d.name || '') + ' ' + cid + ' ' + ((cs && (cs.customer || {}).name) || '') + ' ' + st.t).toLowerCase();
@@ -27685,7 +27711,7 @@
     return 0;
   }
   function _depActiveDocs() {
-    return (window._depositDocs || []).filter(d => d && d.status !== 'done' && d.status !== 'ignored' && !window._depAutoLocks[d._id]);
+    return (window._depositDocs || []).filter(d => d && d.status !== 'done' && d.status !== 'ignored' && !window._depAutoLocks[d._id] && !_depUsedCase(d));
   }
   function _depCaseKind(c) {
     if (c && c.isAddReq === true) return 'addreq';
@@ -27710,13 +27736,14 @@
         const nameOk = !!key && sp.base === key;
         const phoneBad = nameOk && !!sp.l4 && !!cl4 && sp.l4 !== cl4;   // 번호를 붙였는데 접수와 다름
         const amtOk = exp > 0 && Number(d.amount) === exp;
-        if (!nameOk && !amtOk) return;
+        if (!nameOk) return;   // (v120) 이름이 맞는 입금만 후보. 금액만 같은 입금은 '다른 입금 찾기' 검색으로만
         // 금액만 같은 문자는 접수 이후에 도착한 것만 후보 (접수 전 입금은 이 건과 무관)
         if (!nameOk && amtOk) { const rm = _depMs(d.receivedAt); if (rm && caseMs && rm < caseMs) return; }
         cands.push({ dep: d, nameOk, amtOk, phoneBad, l4: sp.l4 });
       });
       if (!cands.length) return Object.assign({}, none, { kind: _depCaseKind(c), exp });
-      const rank = x => (x.nameOk && x.amtOk) ? 0 : (x.nameOk ? 1 : 2);
+      // (v120) 순위: ①이름+번호4자리 ②이름+금액 ③이름만(금액 달라도 표시) ④번호가 다른 동명 입금
+      const rank = x => x.phoneBad ? 4 : (x.l4 ? (x.amtOk ? 0 : 1) : (x.amtOk ? 2 : 3));
       cands.sort((a, b) => rank(a) - rank(b) || _depMs(b.dep.receivedAt) - _depMs(a.dep.receivedAt));
       const exact = cands.filter(x => x.nameOk && x.amtOk && !x.phoneBad && !x.dep.undoneBy);   // 확정 취소된 입금은 자동 재확정 안 함
       const kind = _depCaseKind(c);
