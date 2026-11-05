@@ -5217,7 +5217,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v116';
+  const APP_VERSION = 'v117';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -5229,6 +5229,8 @@
   // ============================================================
   window.DEPOSIT_AUTO_CONFIRM = true;
   // (v114) 유형별 입금 처리 방식: 'auto' = 이름·금액 일치 시 자동 이동 / 'check' = 자동 안 함, '입금내역 확인 필요'로 담당자가 선택 / 'off' = 표시도 안 함(기존 방식)
+  // (v117) true = 기존 [입금완료] 버튼을 모두에게 다시 보여줌(입금내역 확인 버튼과 함께). false = 유상·보상판매는 입금내역 확인으로만, 조장만 [입금완료(사유 필수)]
+  window.DEPOSIT_KEEP_PAY_BUTTON = true;
   window.DEPOSIT_AUTO_POLICY = { free: 'auto', paid: 'check', exchange: 'auto', returns: 'auto', bosang: 'check', hairdryer: 'off', discard: 'off', addreq: 'off' };
 
   // ============================================================
@@ -27847,6 +27849,11 @@
         action: () => window.depOpenCheckModal(c) };
       const idx = buttons.findIndex(b => ids.indexOf(b.id) >= 0);
       const orig = idx >= 0 ? buttons[idx] : null;
+      // (v117) DEPOSIT_KEEP_PAY_BUTTON=true: 기존 [입금완료]를 지우지 않고 [입금내역 확인]과 함께 보여준다 (쌓여 있는 입금대기 처리용)
+      if (window.DEPOSIT_KEEP_PAY_BUTTON === true) {
+        if (idx >= 0) buttons.splice(idx, 0, nb); else if (!c.isAddReq) buttons.unshift(nb);
+        return;
+      }
       if (idx >= 0) buttons[idx] = nb; else if (!c.isAddReq) buttons.unshift(nb);
       // (v116) 유상·보상판매: 문자 없이 입금완료는 해피콜 조장만, 사유 필수
       if (pol === 'check' && orig && window.canRevertComplete && window.canRevertComplete()) {
