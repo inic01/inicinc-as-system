@@ -5217,7 +5217,7 @@
 
   // (v27) 앱 버전 — 배포 시 이 값을 올리고, Firestore config/appVersion 문서의 version 필드도 같이 갱신
   //        사용자 브라우저 버전이 Firestore의 최신 버전과 다르면 노란 배너로 새로고침 안내
-  const APP_VERSION = 'v123';
+  const APP_VERSION = 'v125';
   // 디버깅용으로 전역에 노출
   window.APP_VERSION = APP_VERSION;
 
@@ -19698,16 +19698,23 @@
         if (stageName === '수리대기' && (c.stage === '임시저장' || c._isDraft === true)) return true;
         return false;
       });
-      // (v111) 해피콜대기: 답변완료(재검수·확인요청·협의)로 돌아온 건은 맨 위에, 돌아온 시각이 최근인 순서로
+      // (v125) 해피콜대기: 해피콜대기에 들어온 시각 최신순 (재검수 답변완료든 새 해피콜 폼이든 같은 기준, 맨 위 고정 없음)
       if (stageName === '해피콜대기' && stageItems.length > 1) {
-        const _ret = (c) => {
+        const _ms = (t) => {
+          try {
+            if (!t) return 0;
+            if (typeof t.toMillis === 'function') return t.toMillis();
+            if (typeof t.seconds === 'number') return t.seconds * 1000;
+            const n = Date.parse(t); return isNaN(n) ? 0 : n;
+          } catch (e) { return 0; }
+        };
+        const _arr = (c) => {
           const h = Array.isArray(c.statusHistory) ? c.statusHistory : [];
-          const l = h[h.length - 1];
-          if (!l || l.toStage !== '해피콜대기' || !/답변완료/.test(String(l.action || ''))) return 0;
-          const t = Date.parse(l.changedAt || ''); return isNaN(t) ? 1 : t;
+          for (let i = h.length - 1; i >= 0; i--) { if (h[i] && h[i].toStage === '해피콜대기') { const t = _ms(h[i].changedAt); if (t) return t; break; } }
+          return _ms(c.statusUpdatedAt) || _ms(c.updatedAt) || 0;
         };
         const _idx = new Map(stageItems.map((c, i) => [c, i]));
-        stageItems.sort((a, b) => { const ra = _ret(a), rb = _ret(b); if (ra || rb) { if (!ra) return 1; if (!rb) return -1; return rb - ra; } return _idx.get(a) - _idx.get(b); });
+        stageItems.sort((x, y) => { const ax = _arr(x), ay = _arr(y); if (ax !== ay) return ay - ax; return _idx.get(x) - _idx.get(y); });
       }
       const count = stageItems.length;
       // 접힘 결정:
@@ -27457,9 +27464,9 @@
   function _ledStatus(d, pend) {
     if (d.status === 'done') return d.handledBy === '자동' ? { t: '자동확인', c: 'c-ok' } : { t: '확인완료', c: 'c-ok' };
     if (d.status === 'ignored') return { t: '제외', c: 'c-wait' };
-    const amt = Number(d.amount) || 0, nm = _depSplit(d.name).base;
+    const amt = Number(d.amount) || 0, _sp = _depSplit(d.name), nm = _sp.base;
     if (_depUsedCase(d)) return { t: '확인완료', c: 'c-ok' };
-    const hit = !!nm && pend.some(p => p.nm === nm);
+    const hit = (!!nm && pend.some(p => p.nm === nm)) || (!!_sp.l4 && pend.some(p => p.l4 && p.l4 === _sp.l4));   // (v124) 번호 4자리만 맞아도 확인 필요
     if (hit) return { t: '확인 필요', c: 'c-chk' };
     if (_depDupCase(d)) return { t: '중복 입금 의심', c: 'c-chk' };   // (v123)
     return { t: '연결 대기', c: 'c-wait' };
@@ -27469,7 +27476,7 @@
     if (!box) return;
     _depUpdateBadge();
     const deps = (window._depositDocs || []).slice().sort((a, b) => (_depMs(b.receivedAt) - _depMs(a.receivedAt)) || String(_ledTime(b)).localeCompare(String(_ledTime(a))));
-    const pend = _depPendingCases().filter(c => _depPolicy(c) !== 'off').map(c => ({ nm: _depNorm((c.customer || {}).name), exp: Number(window._caseExpectedAmount(c)) || 0 }));
+    const pend = _depPendingCases().filter(c => _depPolicy(c) !== 'off').map(c => ({ nm: _depNorm((c.customer || {}).name), l4: _depCaseL4(c), exp: Number(window._caseExpectedAmount(c)) || 0 }));
     const all = Array.isArray(window.dashAllCases) ? window.dashAllCases : [];
     const rowObjs = deps.map(d => {
       const st = _ledStatus(d, pend);
@@ -27748,14 +27755,15 @@
         const nameOk = !!key && sp.base === key;
         const phoneBad = nameOk && !!sp.l4 && !!cl4 && sp.l4 !== cl4;   // 번호를 붙였는데 접수와 다름
         const amtOk = exp > 0 && Number(d.amount) === exp;
-        if (!nameOk) return;   // (v120) 이름이 맞는 입금만 후보. 금액만 같은 입금은 '다른 입금 찾기' 검색으로만
+        const l4Only = !nameOk && !!sp.l4 && !!cl4 && sp.l4 === cl4;   // (v124) 이름은 다르지만 휴대폰 뒤 4자리가 같은 입금 → 확인 필요에만 노출(자동 X)
+        if (!nameOk && !l4Only) return;   // (v120) 이름 또는 번호 4자리가 맞는 입금만 후보. 금액만 같은 입금은 '다른 입금 찾기' 검색으로만
         // 금액만 같은 문자는 접수 이후에 도착한 것만 후보 (접수 전 입금은 이 건과 무관)
         if (!nameOk && amtOk) { const rm = _depMs(d.receivedAt); if (rm && caseMs && rm < caseMs) return; }
-        cands.push({ dep: d, nameOk, amtOk, phoneBad, l4: sp.l4 });
+        cands.push({ dep: d, nameOk, amtOk, phoneBad, l4: sp.l4, l4Only });
       });
       if (!cands.length) return Object.assign({}, none, { kind: _depCaseKind(c), exp });
       // (v120) 순위: ①이름+번호4자리 ②이름+금액 ③이름만(금액 달라도 표시) ④번호가 다른 동명 입금
-      const rank = x => x.phoneBad ? 4 : (x.l4 ? (x.amtOk ? 0 : 1) : (x.amtOk ? 2 : 3));
+      const rank = x => x.l4Only ? (x.amtOk ? 2.5 : 3.5) : (x.phoneBad ? 4 : (x.l4 ? (x.amtOk ? 0 : 1) : (x.amtOk ? 2 : 3)));
       cands.sort((a, b) => rank(a) - rank(b) || _depMs(b.dep.receivedAt) - _depMs(a.dep.receivedAt));
       const exact = cands.filter(x => x.nameOk && x.amtOk && !x.phoneBad && !x.dep.undoneBy);   // 확정 취소된 입금은 자동 재확정 안 함
       const kind = _depCaseKind(c);
@@ -27952,7 +27960,7 @@
     const searchMap = {};
     const rowHtml = (x) => {
       const d = x.dep; const amt = Number(d.amount) || 0; const diff = amt - exp;
-      const nb = x.nameOk ? '<span style="background:#10b981;color:#fff;border-radius:99px;padding:2px 9px;font-size:11px;font-weight:800;">이름 일치</span>' + (x.phoneBad ? '<span style="background:#ef4444;color:#fff;border-radius:99px;padding:2px 9px;font-size:11px;font-weight:800;">번호 4자리 다름</span>' : (x.l4 ? '<span style="background:#10b981;color:#fff;border-radius:99px;padding:2px 9px;font-size:11px;font-weight:800;">번호 일치</span>' : '')) : '<span style="background:#f59e0b;color:#fff;border-radius:99px;padding:2px 9px;font-size:11px;font-weight:800;">이름 다름</span>';
+      const nb = x.nameOk ? '<span style="background:#10b981;color:#fff;border-radius:99px;padding:2px 9px;font-size:11px;font-weight:800;">이름 일치</span>' + (x.phoneBad ? '<span style="background:#ef4444;color:#fff;border-radius:99px;padding:2px 9px;font-size:11px;font-weight:800;">번호 4자리 다름</span>' : (x.l4 ? '<span style="background:#10b981;color:#fff;border-radius:99px;padding:2px 9px;font-size:11px;font-weight:800;">번호 일치</span>' : '')) : '<span style="background:#f59e0b;color:#fff;border-radius:99px;padding:2px 9px;font-size:11px;font-weight:800;">이름 다름</span>' + (x.l4Only ? '<span style="background:#10b981;color:#fff;border-radius:99px;padding:2px 9px;font-size:11px;font-weight:800;">번호 일치</span>' : '');
       const ab = x.amtOk ? '<span style="background:#10b981;color:#fff;border-radius:99px;padding:2px 9px;font-size:11px;font-weight:800;">금액 일치</span>' : `<span style="background:#f59e0b;color:#fff;border-radius:99px;padding:2px 9px;font-size:11px;font-weight:800;">금액 ${diff < 0 ? '-' : '+'}${Math.abs(diff).toLocaleString()}원</span>`;
       return `<label style="display:block;border:1px solid #e5e7eb;border-radius:10px;padding:10px 12px;cursor:pointer;">
         <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
@@ -27977,7 +27985,7 @@
       resEl.innerHTML = hits.map(d => {
         const sp = _depSplit(d.name), cl4 = _depCaseL4(c);
         const nameOk = !!_depNorm((c.customer || {}).name) && sp.base === _depNorm((c.customer || {}).name);
-        const x = { dep: d, nameOk, amtOk: exp > 0 && Number(d.amount) === exp, phoneBad: nameOk && !!sp.l4 && !!cl4 && sp.l4 !== cl4, l4: sp.l4 };
+        const x = { dep: d, nameOk, amtOk: exp > 0 && Number(d.amount) === exp, phoneBad: nameOk && !!sp.l4 && !!cl4 && sp.l4 !== cl4, l4: sp.l4, l4Only: !nameOk && !!sp.l4 && !!cl4 && sp.l4 === cl4 };
         searchMap[d._id] = x;
         return rowHtml(x);
       }).join('') || '<div style="color:#9ca3af;padding:8px;font-size:13px;">검색 결과가 없습니다.</div>';
